@@ -3,8 +3,7 @@ import sqlite3
 import random
 import time
 import os
-import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 # ---------- КОНФИГ ----------
@@ -106,6 +105,93 @@ def init_db():
 
 init_db()
 
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+
+def get_user(user_id):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
+    user = cur.fetchone()
+    conn.close()
+    return user
+
+def update_user(user_id, **kwargs):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    for key, value in kwargs.items():
+        cur.execute(f"UPDATE users SET {key}=? WHERE user_id=?", (value, user_id))
+    conn.commit()
+    conn.close()
+
+def add_item(user_id, item, count=1):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO inventory (user_id, item, count) VALUES (?, ?, ?)
+        ON CONFLICT(user_id, item) DO UPDATE SET count = count + ?
+    ''', (user_id, item, count, count))
+    conn.commit()
+    conn.close()
+
+def remove_item(user_id, item, count=1):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute("SELECT count FROM inventory WHERE user_id=? AND item=?", (user_id, item))
+    result = cur.fetchone()
+    if result and result[0] >= count:
+        if result[0] == count:
+            cur.execute("DELETE FROM inventory WHERE user_id=? AND item=?", (user_id, item))
+        else:
+            cur.execute("UPDATE inventory SET count = count - ? WHERE user_id=? AND item=?", (count, user_id, item))
+        conn.commit()
+        conn.close()
+        return True
+    conn.close()
+    return False
+
+def has_item(user_id, item):
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute("SELECT count FROM inventory WHERE user_id=? AND item=?", (user_id, item))
+    result = cur.fetchone()
+    conn.close()
+    return result is not None and result[0] > 0
+
+def check_ending(user_id):
+    user = get_user(user_id)
+    if not user:
+        return None
+    
+    # Индексы в кортеже user
+    gold = user[10]
+    deaths = user[16]
+    exp = user[4]
+    wins = user[15]
+    demon_kills = user[17]
+    lilit = user[25]
+    ending = user[23]
+    
+    if ending:
+        return ENDINGS.get(ending, {}).get('text', '')
+    
+    if gold <= 0 and deaths >= 5 and exp <= 10:
+        update_user(user_id, ending='death')
+        return ENDINGS['death']['text']
+    
+    if wins >= 100:
+        update_user(user_id, ending='victory')
+        return ENDINGS['victory']['text']
+    
+    if demon_kills >= 100 and deaths >= 50:
+        update_user(user_id, ending='demon')
+        return ENDINGS['demon']['text']
+    
+    if lilit >= 100:
+        update_user(user_id, ending='lilit')
+        return ENDINGS['lilit']['text']
+    
+    return None
+
 # ---------- КНОПКИ ГЛАВНОГО МЕНЮ ----------
 def main_menu_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -121,7 +207,8 @@ def main_menu_keyboard():
     btn10 = KeyboardButton("⚡ PvP")
     btn11 = KeyboardButton("🎲 Казино")
     btn12 = KeyboardButton("📅 Ежедневно")
-    markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8, btn9, btn10, btn11, btn12)
+    btn13 = KeyboardButton("👥 Друзья")
+    markup.add(btn1, btn2, btn3, btn4, btn5, btn6, btn7, btn8, btn9, btn10, btn11, btn12, btn13)
     return markup
 
 # ---------- КЛАССЫ ----------
@@ -142,11 +229,11 @@ AURAS = {
 
 # ---------- МОНСТРЫ ----------
 MONSTERS = {
-    'Гниющий': {'hp': 25, 'dmg': 5, 'attacks': ['Гнилой плевок', 'Разложение', 'Трупная вонь'], 'image': 'https://i.imgur.com/gniy.jpg'},
-    'Безликий': {'hp': 20, 'dmg': 4, 'attacks': ['Крик пустоты', 'Похищение лица', 'Удар из ниоткуда'], 'image': 'https://i.imgur.com/bezlikiy.jpg'},
-    'Крикун': {'hp': 28, 'dmg': 6, 'attacks': ['Визг', 'Разрывающий крик', 'Звуковая волна'], 'image': 'https://i.imgur.com/krikun.jpg'},
-    'Пожиратель': {'hp': 35, 'dmg': 7, 'attacks': ['Кусок плоти', 'Проглотить', 'Желудочный сок'], 'image': 'https://i.imgur.com/pozhiratel.jpg'},
-    'Тень': {'hp': 22, 'dmg': 8, 'attacks': ['Клинок тьмы', 'Паралич страхом', 'Исчезновение'], 'image': 'https://i.imgur.com/ten.jpg'}
+    'Гниющий': {'hp': 25, 'dmg': 5, 'attacks': ['Гнилой плевок', 'Разложение', 'Трупная вонь']},
+    'Безликий': {'hp': 20, 'dmg': 4, 'attacks': ['Крик пустоты', 'Похищение лица', 'Удар из ниоткуда']},
+    'Крикун': {'hp': 28, 'dmg': 6, 'attacks': ['Визг', 'Разрывающий крик', 'Звуковая волна']},
+    'Пожиратель': {'hp': 35, 'dmg': 7, 'attacks': ['Кусок плоти', 'Проглотить', 'Желудочный сок']},
+    'Тень': {'hp': 22, 'dmg': 8, 'attacks': ['Клинок тьмы', 'Паралич страхом', 'Исчезновение']}
 }
 
 # ---------- ДИАЛОГИ ДЕМОНОВ ----------
@@ -189,8 +276,7 @@ SHOP_ITEMS = {
     'Зелье маны': {'price': 15, 'effect': 'mana', 'value': 15, 'desc': 'Восстанавливает 15 маны'},
     'Кристалл ауры': {'price': 50, 'effect': 'change_aura', 'desc': 'Позволяет сменить ауру'},
     'Душа демона': {'price': 100, 'effect': 'perm_buff', 'buff': 'dmg', 'value': 2, 'desc': 'Навсегда +2 к урону'},
-    'Амулет теней': {'price': 200, 'effect': 'perm_buff', 'buff': 'dodge', 'value': 5, 'desc': 'Навсегда +5% уклонения'},
-    'Билет в баню': {'price': 500, 'effect': 'nothing', 'desc': 'Бесполезно, но пафосно'}
+    'Амулет теней': {'price': 200, 'effect': 'perm_buff', 'buff': 'dodge', 'value': 5, 'desc': 'Навсегда +5% уклонения'}
 }
 
 # ---------- ДОСТИЖЕНИЯ ----------
@@ -201,22 +287,6 @@ ACHIEVEMENTS = {
     'survivor': {'name': '♻️ Бессмертный', 'desc': 'Выжить в 10 боях подряд', 'reward': 300},
     'pvper': {'name': '⚔️ Дуэлянт', 'desc': 'Выиграть 10 PvP боёв', 'reward': 400},
     'explorer': {'name': '🌑 Исследователь', 'desc': 'Спуститься на 10 уровень Подземелья', 'reward': 600}
-}
-
-# ---------- ПОГОДА ----------
-WEATHER = [
-    {'name': '☀️ Ясно', 'effect': 'none'},
-    {'name': '🌑 Кровавая луна', 'effect': 'all_damage_mult', 'value': 1.3, 'desc': 'Урон всех +30%'},
-    {'name': '🌫️ Туман', 'effect': 'dodge_mult', 'value': 1.2, 'desc': 'Уклонение всех +20%'},
-    {'name': '⚡ Шторм душ', 'effect': 'random', 'desc': 'Случайный демон становится сильнее'}
-]
-
-# ---------- СПУТНИКИ ----------
-COMPANIONS = {
-    'Щенок демона': {'bonus': 'damage', 'value': 2, 'price': 100, 'desc': '+2 к урону'},
-    'Тень': {'bonus': 'dodge', 'value': 15, 'price': 200, 'desc': '+15% к уклонению'},
-    'Лилит': {'bonus': 'crit', 'value': 0.5, 'romance': True, 'price': 500, 'desc': '+50% к криту, можно строить отношения'},
-    'Голодный дух': {'bonus': 'lifesteal', 'value': 5, 'price': 300, 'desc': '5% вампиризма'}
 }
 
 # ---------- КОМБО ----------
@@ -245,33 +315,7 @@ EVENTS = [
             {'text': '⚔️ Атаковать', 'effect': 'fight', 'monster': 'Гниющий'},
             {'text': '🏃 Бежать', 'effect': 'hp_cost', 'value': 5, 'result': 'Ты сбежал, но потерял 5 HP в панике'}
         ]
-    },
-    {
-        'name': '🌫️ Призрак прошлого',
-        'desc': 'Перед тобой возникает призрак женщины, которую ты когда-то любил. Она плачет.',
-        'options': [
-            {'text': '💔 Убить снова', 'effect': 'lilit_points', 'value': -10, 'gold': 30, 'result': 'Она исчезает. Ты чувствуешь пустоту. +30💰'},
-            {'text': '🕯️ Помолиться', 'effect': 'buff', 'buff': 'hp', 'value': 10, 'result': 'Тепло разливается по телу. +10 HP'},
-            {'text': '😭 Заплакать с ней', 'effect': 'lilit_points', 'value': 10, 'result': 'Она улыбается и исчезает. Ты стал ближе к тьме.'}
-        ]
-    },
-    {
-        'name': '💰 Сундук с сокровищами',
-        'desc': 'Сундук. Точно сокровища. Или ловушка?',
-        'options': [
-            {'text': '🔓 Открыть', 'effect': 'random_gold', 'min': 10, 'max': 100, 'result': 'Ты нашёл {gold} золота!'},
-            {'text': '🛡️ Проверить ловушки', 'effect': 'dodge_check', 'result': 'Ловушка обезврежена! Сундук твой.'},
-            {'text': '🚶 Пройти мимо', 'effect': 'nothing', 'result': 'Мало ли что там...'}
-        ]
     }
-]
-
-# ---------- КВЕСТЫ ----------
-QUESTS = [
-    {'name': 'Охотник', 'desc': 'Убить 5 демонов', 'target': 5, 'type': 'kill', 'reward': 100},
-    {'name': 'Транжира', 'desc': 'Потратить 200 золота', 'target': 200, 'type': 'spend', 'reward': 50},
-    {'name': 'Выживальщик', 'desc': 'Выжить в 10 боях', 'target': 10, 'type': 'survive', 'reward': 150},
-    {'name': 'Дуэлянт', 'desc': 'Выиграть 3 PvP боя', 'target': 3, 'type': 'pvp_win', 'reward': 200}
 ]
 
 # ---------- ПРЕДЫСТОРИЯ ----------
@@ -320,7 +364,6 @@ LORE_TEXT = """
 # ---------- КОНЦОВКИ ----------
 ENDINGS = {
     'death': {
-        'condition': lambda u: u[10] <= 0 and u[16] >= 5 and u[5] <= 10,
         'text': """
 🪦 *Ты падаешь на холодный камень. Тьма забирает тебя навсегда.*
 Бездна шепчет: «Ты был никем. Стал ничем.»
@@ -330,7 +373,6 @@ ENDINGS = {
         """
     },
     'victory': {
-        'condition': lambda u: u[14] >= 100,  # 100 побед
         'text': """
 🌑 *Ты стоишь перед Бездной. Она смеётся.*
 «Ты думал, я — монстр? Я — твоё отражение.»
@@ -345,7 +387,6 @@ ENDINGS = {
         """
     },
     'demon': {
-        'condition': lambda u: u[17] >= 100 and u[16] >= 50,  # 100 убийств демонов, 50 смертей
         'text': """
 👹 *Ты чувствуешь, как тьма прорастает в тебе.*
 Ты больше не человек. Ты — то, что убивал.
@@ -356,7 +397,6 @@ ENDINGS = {
         """
     },
     'lilit': {
-        'condition': lambda u: u[25] >= 100,  # 100 очков Лилит
         'text': """
 ❤️ *Лилит смотрит на тебя с любовью.*
 «Ты выбрал меня. Мы навсегда вместе.»
@@ -367,76 +407,6 @@ ENDINGS = {
         """
     }
 }
-
-# ---------- ФУНКЦИИ ----------
-
-def get_user(user_id):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
-    user = cur.fetchone()
-    conn.close()
-    return user
-
-def update_user(user_id, **kwargs):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    for key, value in kwargs.items():
-        cur.execute(f"UPDATE users SET {key}=? WHERE user_id=?", (value, user_id))
-    conn.commit()
-    conn.close()
-
-def add_item(user_id, item, count=1):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute('''
-        INSERT INTO inventory (user_id, item, count) VALUES (?, ?, ?)
-        ON CONFLICT(user_id, item) DO UPDATE SET count = count + ?
-    ''', (user_id, item, count, count))
-    conn.commit()
-    conn.close()
-
-def remove_item(user_id, item, count=1):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute("SELECT count FROM inventory WHERE user_id=? AND item=?", (user_id, item))
-    result = cur.fetchone()
-    if result and result[0] >= count:
-        if result[0] == count:
-            cur.execute("DELETE FROM inventory WHERE user_id=? AND item=?", (user_id, item))
-        else:
-            cur.execute("UPDATE inventory SET count = count - ? WHERE user_id=? AND item=?", (count, user_id, item))
-        conn.commit()
-        conn.close()
-        return True
-    conn.close()
-    return False
-
-def check_achievement(user_id, ach_id):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM achievements WHERE user_id=? AND ach_id=?", (user_id, ach_id))
-    if not cur.fetchone():
-        cur.execute("INSERT INTO achievements (user_id, ach_id) VALUES (?, ?)", (user_id, ach_id))
-        conn.commit()
-        conn.close()
-        return True
-    conn.close()
-    return False
-
-def check_level_up(user_id):
-    user = get_user(user_id)
-    if user and user[5] >= user[6]:  # exp >= exp_next
-        new_level = user[3] + 1
-        update_user(user_id, level=new_level, exp=user[5] - user[6], exp_next=user[6] * 2)
-        return new_level
-    return None
-
-def get_weather():
-    return random.choice(WEATHER)
-
-def get_random_event():
-    return random.choice(EVENTS)
 
 # ---------- СТАРТ ----------
 @bot.message_handler(commands=['start'])
@@ -451,10 +421,10 @@ def start_cmd(message):
         # Выбор класса
         markup = InlineKeyboardMarkup(row_width=2)
         for class_name in CLASSES.keys():
-            markup.add(InlineKeyboardButton(class_name, callback_data=f"class_{class_name}"))
+            markup.add(InlineKeyboardButton(class_name, callback_data=f"cls_{class_name}"))
         bot.reply_to(message, "🖤 Выбери свой класс:", reply_markup=markup)
     else:
-        if user[13] == 0:  # saw_lore
+        if user[14] == 0:  # saw_lore
             bot.reply_to(message, LORE_TEXT, parse_mode='Markdown')
             update_user(uid, saw_lore=1)
         
@@ -467,10 +437,10 @@ def start_cmd(message):
     
     conn.close()
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('class_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cls_'))
 def class_callback(call):
     uid = call.from_user.id
-    class_name = call.data.replace('class_', '')
+    class_name = call.data.replace('cls_', '')
     
     class_stats = CLASSES[class_name]
     
@@ -488,7 +458,7 @@ def class_callback(call):
         class_stats['hp'],
         class_stats['mana'],
         class_stats['mana'],
-        50,  # стартовое золото
+        50,
         'Кровавая жажда',
         0
     ))
@@ -547,22 +517,22 @@ def aura_cmd(message):
         aura = user[11]
         desc = AURAS[aura]['desc']
         
-        # Кнопки для смены ауры (если есть кристалл)
+        # Кнопки для смены ауры
         markup = None
         if has_item(uid, 'Кристалл ауры'):
             markup = InlineKeyboardMarkup()
             for aura_name in AURAS.keys():
                 if aura_name != aura:
-                    markup.add(InlineKeyboardButton(aura_name, callback_data=f"change_aura_{aura_name}"))
+                    markup.add(InlineKeyboardButton(aura_name, callback_data=f"ch_aur_{aura_name}"))
         
         bot.reply_to(message, f"🌫️ Твоя аура: *{aura}*\n{desc}", parse_mode='Markdown', reply_markup=markup)
     else:
         bot.reply_to(message, "Сначала /start")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('change_aura_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('ch_aur_'))
 def change_aura_callback(call):
     uid = call.from_user.id
-    new_aura = call.data.replace('change_aura_', '')
+    new_aura = call.data.replace('ch_aur_', '')
     
     if remove_item(uid, 'Кристалл ауры', 1):
         update_user(uid, aura=new_aura)
@@ -608,22 +578,11 @@ def buy_callback(call):
         bot.answer_callback_query(call.id, "❌ Недостаточно золота")
         return
     
-    # Списываем золото
     update_user(uid, gold=user[10] - item_data['price'])
     
-    # Применяем эффект
-    if item_data['effect'] == 'heal':
-        add_item(uid, 'Зелье HP')
+    if item_data['effect'] in ['heal', 'mana', 'change_aura']:
+        add_item(uid, item_name)
         result = f"✅ Куплено: {item_name}"
-    elif item_data['effect'] == 'mana':
-        add_item(uid, 'Зелье маны')
-        result = f"✅ Куплено: {item_name}"
-    elif item_data['effect'] == 'change_aura':
-        add_item(uid, 'Кристалл ауры')
-        result = f"✅ Куплено: {item_name}"
-    elif item_data['effect'] == 'perm_buff':
-        # Постоянный бафф - нужно хранить отдельно, упростим пока
-        result = f"✅ Куплено: {item_name} (эффект применён)"
     else:
         result = f"✅ Куплено: {item_name}"
     
@@ -678,8 +637,8 @@ def fate_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
     
-    if user[24]:  # ending
-        ending_text = ENDINGS.get(user[24], {}).get('text', '')
+    if user[23]:
+        ending_text = ENDINGS.get(user[23], {}).get('text', '')
         bot.reply_to(message, f"Твоя судьба уже решена:\n{ending_text}")
     else:
         text = (f"📊 *Твоя судьба ещё не решена*\n\n"
@@ -689,6 +648,233 @@ def fate_cmd(message):
                 f"⚡ PvP рейтинг: {user[18]}\n"
                 f"❤️ Отношения с Лилит: {user[25]}")
         bot.reply_to(message, text, parse_mode='Markdown')
+
+# ---------- БОЙ ----------
+@bot.message_handler(commands=['fight'])
+@bot.message_handler(func=lambda message: message.text == "⚔️ В бой")
+def fight_start(message):
+    # Сбрасываем ожидание ввода
+    bot.clear_step_handler_by_chat_id(message.chat.id)
+    
+    uid = message.from_user.id
+    user = get_user(uid)
+    
+    if not user:
+        bot.reply_to(message, "Мёртвые не сражаются. /start")
+        return
+    
+    # Выбираем монстра
+    monster_name = random.choice(list(MONSTERS.keys()))
+    monster = MONSTERS[monster_name].copy()
+    monster['hp'] = monster['hp'] + random.randint(-5, 5)
+    
+    # Сохраняем состояние боя в памяти
+    global fight_state
+    if 'fight_state' not in globals():
+        fight_state = {}
+    
+    # Выбираем случайную фразу для диалога
+    dialog_text = random.choice(DEMON_DIALOGS[monster_name])
+    
+    fight_state[uid] = {
+        'monster_name': monster_name,
+        'monster_hp': monster['hp'],
+        'player_hp': user[6],
+        'dialog_phase': True
+    }
+    
+    # Показываем диалог
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("😨 Умолять", callback_data="f_dlg_plead"),
+        InlineKeyboardButton("😡 Оскорбить", callback_data="f_dlg_insult"),
+        InlineKeyboardButton("🤫 Молчать", callback_data="f_dlg_silent"),
+        InlineKeyboardButton("⚔️ Атаковать", callback_data="f_dlg_attack")
+    )
+    
+    bot.send_message(uid, 
+        f"👹 *{monster_name}*: «{dialog_text}»\n\nТвой ответ:",
+        parse_mode='Markdown',
+        reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('f_dlg_'))
+def fight_dialog_callback(call):
+    uid = call.from_user.id
+    choice = call.data.replace('f_dlg_', '')
+    
+    if uid not in fight_state:
+        bot.answer_callback_query(call.id, "❌ Бой не найден")
+        return
+    
+    monster_name = fight_state[uid]['monster_name']
+    monster_hp = fight_state[uid]['monster_hp']
+    player_hp = fight_state[uid]['player_hp']
+    
+    result_text = ""
+    
+    # Эффекты диалога
+    if choice == "plead":
+        result_text = "😨 Демон смеётся. Ты теряешь ход!"
+        # Пропускаем ход игрока
+        monster_attack = random.choice(MONSTERS[monster_name]['attacks'])
+        monster_dmg = MONSTERS[monster_name]['dmg'] + random.randint(-2, 2)
+        player_hp -= monster_dmg
+        result_text += f"\n👹 {monster_name} использует *{monster_attack}* и наносит {monster_dmg} урона!"
+    elif choice == "insult":
+        result_text = "😡 Демон в ярости! Его урон увеличен, но защита снижена."
+        fight_state[uid]['monster_dmg_mult'] = 1.5
+        fight_state[uid]['monster_def_mult'] = 0.5
+    elif choice == "silent":
+        result_text = "🤫 Демон смущён твоим молчанием и пропускает ход."
+        fight_state[uid]['monster_turn_loss'] = True
+    elif choice == "attack":
+        result_text = "⚔️ Ты атакуешь первым!"
+        fight_state[uid]['first_strike'] = True
+    
+    fight_state[uid]['player_hp'] = player_hp
+    fight_state[uid]['dialog_phase'] = False
+    
+    # Переходим к бою
+    show_fight_menu(uid, call.message.message_id, result_text)
+
+def show_fight_menu(uid, message_id, initial_text=""):
+    if uid not in fight_state:
+        return
+    
+    monster_name = fight_state[uid]['monster_name']
+    monster_hp = fight_state[uid]['monster_hp']
+    player_hp = fight_state[uid]['player_hp']
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("🗡️ Атака", callback_data="f_att_normal"),
+        InlineKeyboardButton("💪 Мощная", callback_data="f_att_heavy"),
+        InlineKeyboardButton("🌀 Рассекающий", callback_data="f_att_sweep"),
+        InlineKeyboardButton("🔪 Кровотечение", callback_data="f_att_bleed"),
+        InlineKeyboardButton("🛡️ Защита", callback_data="f_att_defend"),
+        InlineKeyboardButton("🧪 Зелье", callback_data="f_att_potion"),
+        InlineKeyboardButton("🏃 Сбежать", callback_data="f_att_run")
+    )
+    
+    text = f"{initial_text}\n\n👹 *{monster_name}* ❤️ {monster_hp}\n❤️ Твоё HP: {player_hp}"
+    bot.edit_message_text(text, uid, message_id, parse_mode='Markdown', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('f_att_'))
+def fight_action_callback(call):
+    uid = call.from_user.id
+    action = call.data.replace('f_att_', '')
+    
+    if uid not in fight_state:
+        bot.answer_callback_query(call.id, "❌ Бой не найден")
+        return
+    
+    monster_name = fight_state[uid]['monster_name']
+    monster_hp = fight_state[uid]['monster_hp']
+    player_hp = fight_state[uid]['player_hp']
+    
+    # Расчёт урона
+    base_dmg = random.randint(5, 12)
+    
+    if action == "heavy":
+        base_dmg = int(base_dmg * 1.5)
+        action_text = "💪 Мощная атака"
+    elif action == "sweep":
+        base_dmg = int(base_dmg * 1.2)
+        action_text = "🌀 Рассекающий удар"
+    elif action == "bleed":
+        base_dmg = int(base_dmg * 0.8)
+        action_text = "🔪 Кровоточащий удар"
+    elif action == "defend":
+        action_text = "🛡️ Защита"
+        fight_state[uid]['defending'] = True
+        base_dmg = 0
+    elif action == "potion":
+        if remove_item(uid, 'Зелье HP', 1):
+            heal = 20
+            player_hp += heal
+            user = get_user(uid)
+            if player_hp > user[7]:
+                player_hp = user[7]
+            action_text = f"🧪 Зелье: +{heal} HP"
+            base_dmg = 0
+        else:
+            bot.answer_callback_query(call.id, "❌ Нет зелий!")
+            return
+    elif action == "run":
+        bot.edit_message_text("🏃 Ты сбежал. Трус.", uid, call.message.message_id)
+        del fight_state[uid]
+        return
+    else:
+        action_text = "🗡️ Обычная атака"
+    
+    # Применяем урон
+    monster_hp -= base_dmg
+    
+    result_text = f"{action_text}: {base_dmg} урона!\n"
+    
+    # Проверка смерти монстра
+    if monster_hp <= 0:
+        reward_gold = random.randint(5, 20)
+        reward_exp = 10
+        update_user(uid, 
+                   gold=get_user(uid)[10] + reward_gold,
+                   exp=get_user(uid)[4] + reward_exp,
+                   wins=get_user(uid)[15] + 1,
+                   demon_kills=get_user(uid)[17] + 1)
+        
+        result_text += f"\n💀 Монстр повержен! +{reward_gold}💰 +{reward_exp}✨"
+        bot.edit_message_text(result_text, uid, call.message.message_id)
+        del fight_state[uid]
+        return
+    
+    # Атака монстра
+    monster_attack = random.choice(MONSTERS[monster_name]['attacks'])
+    monster_dmg = MONSTERS[monster_name]['dmg'] + random.randint(-2, 2)
+    
+    # Защита
+    if fight_state[uid].get('defending'):
+        monster_dmg = int(monster_dmg * 0.5)
+        result_text += "🛡️ Защита снижает урон!\n"
+    
+    player_hp -= monster_dmg
+    result_text += f"👹 {monster_name} использует *{monster_attack}* и наносит {monster_dmg} урона!"
+    
+    # Проверка смерти игрока
+    if player_hp <= 0:
+        user = get_user(uid)
+        update_user(uid,
+                   hp=user[7],
+                   gold=user[10] - 5,
+                   deaths=user[16] + 1)
+        result_text += f"\n💔 Ты погиб... Воскрес в таверне (-5💰)"
+        bot.edit_message_text(result_text, uid, call.message.message_id)
+        del fight_state[uid]
+        return
+    
+    # Обновляем состояние
+    fight_state[uid]['monster_hp'] = monster_hp
+    fight_state[uid]['player_hp'] = player_hp
+    fight_state[uid]['defending'] = False
+    
+    # Продолжаем бой
+    show_fight_menu(uid, call.message.message_id, result_text)
+
+# ---------- ЛЕЧЕНИЕ ----------
+@bot.message_handler(commands=['heal'])
+@bot.message_handler(func=lambda message: message.text == "💊 Лечение")
+def heal_cmd(message):
+    uid = message.from_user.id
+    user = get_user(uid)
+    
+    if user and user[6] < user[7] and user[10] >= 10:
+        update_user(uid, hp=user[7], gold=user[10] - 10)
+        bot.reply_to(message,
+            "🩸 Ты жалко протягиваешь руку к алтарю.\n"
+            "Тьма жрёт твоё золото и нехотя зализывает раны.\n"
+            "-10💰\n"
+            "❤️ Здоровье восстановлено.")
+    else:
+        bot.reply_to(message, "❌ Недостаточно золота или HP полное.")
 
 # ---------- PVP ----------
 @bot.message_handler(commands=['pvp'])
@@ -701,7 +887,7 @@ def pvp_menu_cmd(message):
         InlineKeyboardButton("⚔️ Дуэль", callback_data="pvp_duel"),
         InlineKeyboardButton("⏳ Очередь", callback_data="pvp_queue"),
         InlineKeyboardButton("📊 Рейтинг", callback_data="pvp_top"),
-        InlineKeyboardButton("❌ Отмена", callback_data="pvp_cancel")
+        InlineKeyboardButton("❌ Закрыть", callback_data="pvp_close")
     )
     
     bot.send_message(uid, "⚡ *Режим PvP*\nВыбери действие:", parse_mode='Markdown', reply_markup=markup)
@@ -722,11 +908,14 @@ def pvp_top_callback(call):
     
     bot.edit_message_text(text, uid, call.message.message_id, parse_mode='Markdown')
 
+@bot.callback_query_handler(func=lambda call: call.data == "pvp_close")
+def pvp_close_callback(call):
+    bot.delete_message(call.from_user.id, call.message.message_id)
+
 @bot.callback_query_handler(func=lambda call: call.data == "pvp_queue")
 def pvp_queue_callback(call):
     uid = call.from_user.id
     
-    # Проверяем, не в очереди ли уже
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     cur.execute("SELECT * FROM pvp_queue WHERE user_id=?", (uid,))
@@ -735,144 +924,81 @@ def pvp_queue_callback(call):
         conn.close()
         return
     
-    # Добавляем в очередь
     cur.execute("INSERT INTO pvp_queue (user_id, timestamp) VALUES (?, ?)", (uid, int(time.time())))
     conn.commit()
     
-    # Ищем соперника
     cur.execute("SELECT user_id FROM pvp_queue WHERE user_id != ? ORDER BY timestamp LIMIT 1", (uid,))
     opponent = cur.fetchone()
     
     if opponent:
-        # Нашли соперника - удаляем обоих из очереди
         cur.execute("DELETE FROM pvp_queue WHERE user_id IN (?, ?)", (uid, opponent[0]))
         conn.commit()
         conn.close()
         
-        # Создаём бой
         start_pvp_battle(uid, opponent[0])
-        bot.answer_callback_query(call.id, "✅ Соперник найден! Бой начинается.")
+        bot.answer_callback_query(call.id, "✅ Соперник найден!")
     else:
         conn.close()
-        bot.answer_callback_query(call.id, "⏳ Ты в очереди. Жди соперника...")
+        bot.answer_callback_query(call.id, "⏳ Ты в очереди. Жди...")
     
-    bot.edit_message_text("⏳ Ты в очереди на PvP. Как только найдётся соперник, бой начнётся.", 
-                         uid, call.message.message_id)
+    bot.edit_message_text("⏳ Ты в очереди на PvP.", uid, call.message.message_id)
 
-@bot.callback_query_handler(func=lambda call: call.data == "pvp_duel")
-def pvp_duel_callback(call):
-    uid = call.from_user.id
-    bot.edit_message_text("🔍 Введи @username соперника для дуэли:", uid, call.message.message_id)
-    bot.register_next_step_handler(call.message, process_duel_request)
-
-def process_duel_request(message):
-    uid = message.from_user.id
-    target_username = message.text.strip().replace('@', '')
+def start_pvp_battle(p1, p2):
+    user1 = get_user(p1)
+    user2 = get_user(p2)
     
-    # Ищем пользователя по username
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute("SELECT user_id FROM users WHERE username=?", (target_username,))
-    target = cur.fetchone()
-    conn.close()
-    
-    if not target:
-        bot.reply_to(message, "❌ Пользователь не найден или не начинал игру.")
-        return
-    
-    target_id = target[0]
-    
-    # Отправляем запрос
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("✅ Принять", callback_data=f"duel_accept_{uid}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"duel_decline_{uid}")
-    )
-    
-    bot.send_message(target_id, 
-                    f"⚔️ @{message.from_user.username} вызывает тебя на дуэль!",
-                    reply_markup=markup)
-    bot.reply_to(message, "✅ Запрос отправлен. Ожидай ответа.")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('duel_accept_'))
-def duel_accept_callback(call):
-    uid = call.from_user.id
-    challenger_id = int(call.data.replace('duel_accept_', ''))
-    
-    bot.edit_message_text("⚔️ Дуэль принимается! Бой начинается...", uid, call.message.message_id)
-    bot.send_message(challenger_id, "✅ Соперник принял вызов! Бой начинается.")
-    
-    start_pvp_battle(challenger_id, uid)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('duel_decline_'))
-def duel_decline_callback(call):
-    uid = call.from_user.id
-    challenger_id = int(call.data.replace('duel_decline_', ''))
-    
-    bot.edit_message_text("❌ Ты отклонил вызов.", uid, call.message.message_id)
-    bot.send_message(challenger_id, "❌ Соперник отклонил вызов.")
-
-def start_pvp_battle(player1, player2):
-    # Получаем данные игроков
-    user1 = get_user(player1)
-    user2 = get_user(player2)
-    
-    # Создаём бой
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     cur.execute('''
         INSERT INTO pvp_battles 
         (player1, player2, player1_hp, player2_hp, player1_mana, player2_mana, turn) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (player1, player2, user1[6], user2[6], user1[8], user2[8], player1))
+    ''', (p1, p2, user1[6], user2[6], user1[8], user2[8], p1))
     battle_id = cur.lastrowid
     conn.commit()
     conn.close()
     
-    # Отправляем сообщения
-    bot.send_message(player1, f"⚔️ *PvP БОЙ*\nТвой противник: @{user2[1]}\n\nТвой ход!", parse_mode='Markdown')
-    bot.send_message(player2, f"⚔️ *PvP БОЙ*\nТвой противник: @{user1[1]}\n\nОжидай хода противника.", parse_mode='Markdown')
+    bot.send_message(p1, f"⚔️ *PvP Бой*\nПротивник: @{user2[1]}\n\nТвой ход!", parse_mode='Markdown')
+    bot.send_message(p2, f"⚔️ *PvP Бой*\nПротивник: @{user1[1]}\n\nОжидай хода...", parse_mode='Markdown')
     
-    send_pvp_turn(player1, battle_id)
+    send_pvp_turn(p1, battle_id)
 
 def send_pvp_turn(player_id, battle_id):
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
-    cur.execute('''
-        SELECT * FROM pvp_battles WHERE battle_id=? AND (player1=? OR player2=?) AND status='active'
-    ''', (battle_id, player_id, player_id))
+    cur.execute('SELECT * FROM pvp_battles WHERE battle_id=?', (battle_id,))
     battle = cur.fetchone()
     conn.close()
     
-    if not battle:
+    if not battle or battle[8] != 'active':
         return
     
-    # Определяем, кто сейчас ходит
-    current_turn = battle[7]
-    if current_turn != player_id:
+    if battle[7] != player_id:
         return
     
-    player1_id, player2_id = battle[1], battle[2]
-    player1_hp, player2_hp = battle[3], battle[4]
-    player1_mana, player2_mana = battle[5], battle[6]
+    p1, p2 = battle[1], battle[2]
+    p1_hp, p2_hp = battle[3], battle[4]
     
-    # Определяем противника
-    opponent_id = player2_id if player_id == player1_id else player1_id
-    opponent_hp = player2_hp if player_id == player1_id else player1_hp
+    if player_id == p1:
+        opponent_id = p2
+        opponent_hp = p2_hp
+    else:
+        opponent_id = p1
+        opponent_hp = p1_hp
+    
     opponent = get_user(opponent_id)
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("⚔️ Атака", callback_data=f"pvp_attack_{battle_id}"),
-        InlineKeyboardButton("💪 Мощная атака", callback_data=f"pvp_heavy_{battle_id}"),
-        InlineKeyboardButton("🛡️ Защита", callback_data=f"pvp_defend_{battle_id}"),
-        InlineKeyboardButton("🧪 Зелье", callback_data=f"pvp_potion_{battle_id}")
+        InlineKeyboardButton("⚔️ Атака", callback_data=f"pvp_att_{battle_id}"),
+        InlineKeyboardButton("💪 Мощная", callback_data=f"pvp_heavy_{battle_id}"),
+        InlineKeyboardButton("🛡️ Защита", callback_data=f"pvp_def_{battle_id}"),
+        InlineKeyboardButton("🧪 Зелье", callback_data=f"pvp_pot_{battle_id}")
     )
     
     bot.send_message(player_id, 
                     f"⚔️ *Твой ход*\n"
-                    f"Твоё HP: {player1_hp if player_id == player1_id else player2_hp}\n"
-                    f"Твоя мана: {player1_mana if player_id == player1_id else player2_mana}\n"
+                    f"Твоё HP: {p1_hp if player_id == p1 else p2_hp}\n"
                     f"Противник: @{opponent[1]} (HP: {opponent_hp})",
                     parse_mode='Markdown',
                     reply_markup=markup)
@@ -886,106 +1012,101 @@ def pvp_action_callback(call):
     
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
-    cur.execute('SELECT * FROM pvp_battles WHERE battle_id=? AND status="active"', (battle_id,))
+    cur.execute('SELECT * FROM pvp_battles WHERE battle_id=?', (battle_id,))
     battle = cur.fetchone()
     
-    if not battle:
-        bot.answer_callback_query(call.id, "❌ Бой не найден или уже завершён")
+    if not battle or battle[8] != 'active':
+        bot.answer_callback_query(call.id, "❌ Бой не найден")
         conn.close()
         return
     
-    player1_id, player2_id = battle[1], battle[2]
-    player1_hp, player2_hp = battle[3], battle[4]
-    player1_mana, player2_mana = battle[5], battle[6]
+    p1, p2 = battle[1], battle[2]
+    p1_hp, p2_hp = battle[3], battle[4]
+    p1_mana, p2_mana = battle[5], battle[6]
     turn = battle[7]
     
-    # Проверяем, чей ход
     if turn != uid:
-        bot.answer_callback_query(call.id, "❌ Сейчас не твой ход")
+        bot.answer_callback_query(call.id, "❌ Не твой ход")
         conn.close()
         return
     
-    # Определяем, кто атакует, а кто защищается
-    if uid == player1_id:
-        attacker_hp = player1_hp
-        attacker_mana = player1_mana
-        defender_hp = player2_hp
-        defender_id = player2_id
-        defender_mana = player2_mana
+    # Определяем атакующего и защищающегося
+    if uid == p1:
+        attacker_hp = p1_hp
+        attacker_mana = p1_mana
+        defender_hp = p2_hp
+        defender_id = p2
     else:
-        attacker_hp = player2_hp
-        attacker_mana = player2_mana
-        defender_hp = player1_hp
-        defender_id = player1_id
-        defender_mana = player1_mana
+        attacker_hp = p2_hp
+        attacker_mana = p2_mana
+        defender_hp = p1_hp
+        defender_id = p1
     
+    damage = 0
     result_text = ""
     
-    # Обрабатываем действие
-    if action == "attack":
+    if action == "att":
         damage = random.randint(8, 15)
-        defender_hp -= damage
-        result_text = f"⚔️ Ты наносишь {damage} урона!"
+        result_text = f"⚔️ Атака: {damage} урона"
     elif action == "heavy":
         if attacker_mana >= 10:
             damage = random.randint(15, 25)
-            defender_hp -= damage
             attacker_mana -= 10
-            result_text = f"💪 Мощная атака! {damage} урона (-10 маны)"
+            result_text = f"💪 Мощная атака: {damage} урона (-10 маны)"
         else:
-            bot.answer_callback_query(call.id, "❌ Недостаточно маны")
+            bot.answer_callback_query(call.id, "❌ Нет маны")
             conn.close()
             return
-    elif action == "defend":
-        # Временно повышаем защиту (упрощённо)
-        result_text = f"🛡️ Ты встаёшь в защитную стойку. Следующий урон по тебе -50%"
-        # Сохраним это в отдельное поле, но для простоты пока так
-    elif action == "potion":
-        # Используем зелье
+    elif action == "def":
+        result_text = "🛡️ Защита (+50% защиты)"
+        # Упрощённо: запишем в отдельное поле
+        cur.execute("UPDATE pvp_battles SET ?", (battle_id,))
+    elif action == "pot":
         if remove_item(uid, 'Зелье HP', 1):
             heal = 20
             attacker_hp += heal
-            if attacker_hp > get_user(uid)[7]:  # max_hp
-                attacker_hp = get_user(uid)[7]
-            result_text = f"🧪 Ты используешь зелье. Восстановлено {heal} HP"
+            user = get_user(uid)
+            if attacker_hp > user[7]:
+                attacker_hp = user[7]
+            result_text = f"🧪 Зелье: +{heal} HP"
         else:
-            bot.answer_callback_query(call.id, "❌ Нет зелий HP")
+            bot.answer_callback_query(call.id, "❌ Нет зелий")
             conn.close()
             return
     
-    # Проверяем смерть
+    # Применяем урон
+    defender_hp -= damage
+    
+    # Проверка смерти
     if defender_hp <= 0:
         # Победитель
         winner_id = uid
         loser_id = defender_id
         
-        # Обновляем рейтинг
         winner = get_user(winner_id)
         loser = get_user(loser_id)
         
-        new_winner_rating = winner[18] + 25
-        new_loser_rating = loser[18] - 15
+        update_user(winner_id, 
+                   pvp_rating=winner[18] + 25,
+                   pvp_wins=winner[19] + 1,
+                   gold=winner[10] + 100)
+        update_user(loser_id,
+                   pvp_rating=loser[18] - 15,
+                   pvp_losses=loser[20] + 1)
         
-        update_user(winner_id, pvp_rating=new_winner_rating, pvp_wins=winner[19] + 1, gold=winner[10] + 100)
-        update_user(loser_id, pvp_rating=new_loser_rating, pvp_losses=loser[20] + 1)
-        
-        # Завершаем бой
         cur.execute("UPDATE pvp_battles SET status='finished' WHERE battle_id=?", (battle_id,))
         conn.commit()
         conn.close()
         
         bot.edit_message_text(
-            f"🏆 *Ты победил!*\n"
-            f"+25 рейтинга\n"
-            f"+100💰\n"
-            f"Противник потерял 15 рейтинга.",
+            f"🏆 *Ты победил!*\n+25 рейтинга\n+100💰",
             uid, call.message.message_id, parse_mode='Markdown'
         )
-        bot.send_message(defender_id, f"💀 *Ты проиграл*\n-15 рейтинга", parse_mode='Markdown')
+        bot.send_message(loser_id, f"💀 *Ты проиграл*\n-15 рейтинга", parse_mode='Markdown')
         return
     
-    # Обновляем данные в БД
-    if uid == player1_id:
+    # Обновляем данные
+    if uid == p1:
         cur.execute('''
             UPDATE pvp_battles SET 
             player1_hp=?, player1_mana=?, player2_hp=?, turn=? 
@@ -1001,10 +1122,7 @@ def pvp_action_callback(call):
     conn.commit()
     conn.close()
     
-    # Отправляем результат
     bot.edit_message_text(result_text, uid, call.message.message_id)
-    
-    # Ход переходит к противнику
     send_pvp_turn(defender_id, battle_id)
 
 # ---------- КАЗИНО ----------
@@ -1015,18 +1133,18 @@ def casino_cmd(message):
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("🎲 Кости (x3)", callback_data="casino_dice"),
-        InlineKeyboardButton("🪙 Орлянка (x2)", callback_data="casino_coin"),
-        InlineKeyboardButton("🎯 Угадай число (x5)", callback_data="casino_number"),
-        InlineKeyboardButton("❌ Закрыть", callback_data="casino_close")
+        InlineKeyboardButton("🎲 Кости (x3)", callback_data="cas_dice"),
+        InlineKeyboardButton("🪙 Орлянка (x2)", callback_data="cas_coin"),
+        InlineKeyboardButton("🎯 Угадай число (x5)", callback_data="cas_num"),
+        InlineKeyboardButton("❌ Закрыть", callback_data="cas_close")
     )
     
     bot.send_message(uid, "🎲 *Казино*\nВыбери игру:", parse_mode='Markdown', reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('casino_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cas_'))
 def casino_callback(call):
     uid = call.from_user.id
-    game = call.data.replace('casino_', '')
+    game = call.data.replace('cas_', '')
     
     if game == "close":
         bot.delete_message(uid, call.message.message_id)
@@ -1053,21 +1171,18 @@ def process_casino_bet(message, game):
         return
     
     if game == "coin":
-        result = random.choice(['Орёл', 'Решка'])
         markup = InlineKeyboardMarkup()
         markup.add(
             InlineKeyboardButton("🪙 Орёл", callback_data=f"bet_coin_heads_{bet}"),
             InlineKeyboardButton("🪙 Решка", callback_data=f"bet_coin_tails_{bet}")
         )
         bot.reply_to(message, f"💰 Ставка {bet}💰\nВыбери:", reply_markup=markup)
-    
     elif game == "dice":
         markup = InlineKeyboardMarkup()
         for i in range(1, 7):
             markup.add(InlineKeyboardButton(f"🎲 {i}", callback_data=f"bet_dice_{i}_{bet}"))
         bot.reply_to(message, f"💰 Ставка {bet}💰\nВыбери число от 1 до 6:", reply_markup=markup)
-    
-    elif game == "number":
+    elif game == "num":
         bot.reply_to(message, f"💰 Ставка {bet}💰\nВведи число от 1 до 10:")
         bot.register_next_step_handler(message, lambda m: process_number_bet(m, bet))
 
@@ -1085,32 +1200,30 @@ def bet_callback(call):
         return
     
     win = False
-    result_text = ""
     
     if game == "coin":
         flip = random.choice(['heads', 'tails'])
         if choice == flip:
             win = True
             win_amount = bet * 2
-            result_text = f"🪙 Выпало: {'Орёл' if flip == 'heads' else 'Решка'}\nТы выиграл {win_amount}💰!"
+            result = f"🪙 Выпало: {'Орёл' if flip == 'heads' else 'Решка'}\nТы выиграл {win_amount}💰!"
         else:
-            result_text = f"🪙 Выпало: {'Орёл' if flip == 'heads' else 'Решка'}\nТы проиграл {bet}💰."
-    
+            result = f"🪙 Выпало: {'Орёл' if flip == 'heads' else 'Решка'}\nТы проиграл {bet}💰."
     elif game == "dice":
         roll = random.randint(1, 6)
         if int(choice) == roll:
             win = True
             win_amount = bet * 3
-            result_text = f"🎲 Выпало: {roll}\nТы выиграл {win_amount}💰!"
+            result = f"🎲 Выпало: {roll}\nТы выиграл {win_amount}💰!"
         else:
-            result_text = f"🎲 Выпало: {roll}\nТы проиграл {bet}💰."
+            result = f"🎲 Выпало: {roll}\nТы проиграл {bet}💰."
     
     if win:
         update_user(uid, gold=user[10] + win_amount - bet)
     else:
         update_user(uid, gold=user[10] - bet)
     
-    bot.edit_message_text(result_text, uid, call.message.message_id)
+    bot.edit_message_text(result, uid, call.message.message_id)
 
 def process_number_bet(message, bet):
     uid = message.from_user.id
@@ -1138,69 +1251,31 @@ def process_number_bet(message, bet):
         update_user(uid, gold=user[10] - bet)
         bot.reply_to(message, f"🎯 Загадано: {number}\nТы проиграл {bet}💰.")
 
-# ---------- ЕЖЕДНЕВНО ----------
-@bot.message_handler(commands=['daily'])
-@bot.message_handler(func=lambda message: message.text == "📅 Ежедневно")
-def daily_cmd(message):
-    uid = message.from_user.id
-    user = get_user(uid)
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    if user[24] == today:  # last_daily
-        bot.reply_to(message, "❌ Ты уже получал ежедневную награду сегодня. Приходи завтра.")
-        return
-    
-    # Случайный квест
-    quest = random.choice(QUESTS)
-    
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("✅ Принять квест", callback_data=f"daily_accept_{quest['type']}_{quest['target']}_{quest['reward']}"))
-    
-    bot.send_message(uid, f"📅 *Ежедневный квест*\n\n{quest['name']}: {quest['desc']}\nНаграда: {quest['reward']}💰", 
-                    parse_mode='Markdown', reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('daily_accept_'))
-def daily_accept_callback(call):
-    uid = call.from_user.id
-    data = call.data.split('_')
-    quest_type = data[2]
-    target = int(data[3])
-    reward = int(data[4])
-    
-    # Сохраняем квест (упрощённо)
-    update_user(uid, last_daily=datetime.now().strftime("%Y-%m-%d"))
-    
-    bot.edit_message_text(f"✅ Квест принят!\n{quest_type}: {target}\nНаграда: {reward}💰", 
-                         uid, call.message.message_id)
-
 # ---------- ДРУЗЬЯ ----------
 @bot.message_handler(commands=['friends'])
+@bot.message_handler(func=lambda message: message.text == "👥 Друзья")
 def friends_cmd(message):
     uid = message.from_user.id
     
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
-        InlineKeyboardButton("➕ Добавить", callback_data="friends_add"),
-        InlineKeyboardButton("📋 Список", callback_data="friends_list"),
-        InlineKeyboardButton("⏳ Запросы", callback_data="friends_requests"),
-        InlineKeyboardButton("❌ Закрыть", callback_data="friends_close")
+        InlineKeyboardButton("➕ Добавить", callback_data="fr_add"),
+        InlineKeyboardButton("📋 Список", callback_data="fr_list"),
+        InlineKeyboardButton("❌ Закрыть", callback_data="fr_close")
     )
     
     bot.send_message(uid, "👥 *Друзья*\nВыбери действие:", parse_mode='Markdown', reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('friends_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('fr_'))
 def friends_callback(call):
     uid = call.from_user.id
-    action = call.data.replace('friends_', '')
+    action = call.data.replace('fr_', '')
     
     if action == "add":
         bot.edit_message_text("🔍 Введи @username друга:", uid, call.message.message_id)
         bot.register_next_step_handler(call.message, add_friend)
     elif action == "list":
         show_friends_list(uid, call.message.message_id)
-    elif action == "requests":
-        show_friend_requests(uid, call.message.message_id)
     elif action == "close":
         bot.delete_message(uid, call.message.message_id)
 
@@ -1221,13 +1296,13 @@ def add_friend(message):
     target_id = target[0]
     
     if target_id == uid:
-        bot.reply_to(message, "❌ Нельзя добавить себя в друзья")
+        bot.reply_to(message, "❌ Нельзя добавить себя")
         conn.close()
         return
     
     cur.execute("SELECT * FROM friends WHERE user_id=? AND friend_id=?", (uid, target_id))
     if cur.fetchone():
-        bot.reply_to(message, "❌ Вы уже друзья или запрос уже отправлен")
+        bot.reply_to(message, "❌ Уже в друзьях или запрос отправлен")
         conn.close()
         return
     
@@ -1236,12 +1311,12 @@ def add_friend(message):
     conn.commit()
     conn.close()
     
-    bot.reply_to(message, f"✅ Запрос в друзья отправлен @{target_username}")
+    bot.reply_to(message, f"✅ Запрос отправлен @{target_username}")
     
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("✅ Принять", callback_data=f"friend_accept_{uid}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"friend_decline_{uid}")
+        InlineKeyboardButton("✅ Принять", callback_data=f"fr_acc_{uid}"),
+        InlineKeyboardButton("❌ Отклонить", callback_data=f"fr_dec_{uid}")
     )
     bot.send_message(target_id, f"👥 @{message.from_user.username} хочет добавить тебя в друзья!", reply_markup=markup)
 
@@ -1249,7 +1324,7 @@ def show_friends_list(uid, message_id):
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     cur.execute('''
-        SELECT u.username, u.user_id FROM friends f
+        SELECT u.username FROM friends f
         JOIN users u ON f.friend_id = u.user_id
         WHERE f.user_id=? AND f.status='accepted'
     ''', (uid,))
@@ -1258,41 +1333,17 @@ def show_friends_list(uid, message_id):
     
     text = "👥 *Твои друзья*\n\n"
     if friends:
-        for username, friend_id in friends:
+        for (username,) in friends:
             text += f"• @{username}\n"
     else:
         text += "У тебя пока нет друзей."
     
     bot.edit_message_text(text, uid, message_id, parse_mode='Markdown')
 
-def show_friend_requests(uid, message_id):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute('''
-        SELECT u.username, f.friend_id FROM friends f
-        JOIN users u ON f.friend_id = u.user_id
-        WHERE f.user_id=? AND f.status='pending_received'
-    ''', (uid,))
-    requests = cur.fetchall()
-    conn.close()
-    
-    if not requests:
-        bot.edit_message_text("📭 Нет входящих запросов.", uid, message_id)
-        return
-    
-    markup = InlineKeyboardMarkup()
-    for username, requester_id in requests:
-        markup.add(
-            InlineKeyboardButton(f"✅ {username}", callback_data=f"friend_req_accept_{requester_id}"),
-            InlineKeyboardButton(f"❌ {username}", callback_data=f"friend_req_decline_{requester_id}")
-        )
-    
-    bot.edit_message_text("👥 *Входящие запросы*", uid, message_id, parse_mode='Markdown', reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('friend_accept_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('fr_acc_'))
 def friend_accept_callback(call):
     uid = call.from_user.id
-    requester_id = int(call.data.replace('friend_accept_', ''))
+    requester_id = int(call.data.replace('fr_acc_', ''))
     
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
@@ -1301,13 +1352,13 @@ def friend_accept_callback(call):
     conn.commit()
     conn.close()
     
-    bot.edit_message_text("✅ Ты принял запрос в друзья!", uid, call.message.message_id)
-    bot.send_message(requester_id, f"✅ @{call.from_user.username} принял твой запрос в друзья!")
+    bot.edit_message_text("✅ Ты принял запрос!", uid, call.message.message_id)
+    bot.send_message(requester_id, f"✅ @{call.from_user.username} принял твой запрос!")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('friend_decline_'))
+@bot.callback_query_handler(func=lambda call: call.data.startswith('fr_dec_'))
 def friend_decline_callback(call):
     uid = call.from_user.id
-    requester_id = int(call.data.replace('friend_decline_', ''))
+    requester_id = int(call.data.replace('fr_dec_', ''))
     
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
@@ -1319,14 +1370,11 @@ def friend_decline_callback(call):
     bot.edit_message_text("❌ Ты отклонил запрос.", uid, call.message.message_id)
     bot.send_message(requester_id, f"❌ @{call.from_user.username} отклонил твой запрос.")
 
-# ---------- БОЙ ----------
-# [Тут должна быть функция боя, но она слишком длинная для этого сообщения]
-
 # ---------- ЗАПУСК ----------
 if __name__ == '__main__':
     while True:
         try:
-            print("🖤 Мега-бот запущен. Ад приветствует тебя.")
+            print("🖤 Пупсик-бот запущен. Мрак и нежность приветствуют тебя.")
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
             print(f"💀 Бот упал: {e}. Перезапуск через 5 секунд...")
