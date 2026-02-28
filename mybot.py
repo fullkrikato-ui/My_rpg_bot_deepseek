@@ -20,8 +20,8 @@ threading.Thread(target=lambda: HTTPServer(('0.0.0.0', 10000), DummyHandler).ser
 print("🖤 Dummy server started")
 
 # ---------- КОНФИГ ----------
-TOKEN = os.environ.get('TOKEN', '8781969917:AAExzTzuTzLxn0_kh-HpRCrhKLG0FbmOrr4')
-ADMIN_ID = 7228185193  # ТВОЙ ID
+TOKEN = "8781969917:AAExzTzuTzLxn0_kh-HpRCrhKLG0FbmOrr4"
+ADMIN_ID = 7228185193  # Твой ID, любимый
 bot = telebot.TeleBot(TOKEN)
 
 # ---------- ПЕРЕМЕННЫЕ ДЛЯ ИВЕНТА ----------
@@ -244,7 +244,7 @@ SUCCUBUS_FLIRT = [
     "«Ты такой сильный... Останься со мной.»",
     "«Я могу научить тебя кое-чему...»",
     "Ласка гладит тебя по груди: «Ммм, мышцы...»",
-    "«Хочешь, покажу тебе ад с другой стороны?»",
+    "«Хочешь, покажу тебя ад с другой стороны?»",
     "Она облизывается: «Ты выглядишь вкуснее, чем душа грешника.»"
 ]
 
@@ -473,7 +473,7 @@ NIGHT_EVENTS = [
         'text': 'Самая горячая ночь в твоей жизни. Ты еле стоишь утром.',
         'lilit_reward': 50,
         'succubus_reward': 50,
-        'hp_reward': user[7]  # полное HP
+        'hp_reward': 999  # Полное HP (заменится на max_hp в коде)
     }
 ]
 
@@ -509,11 +509,12 @@ def night_cmd(message):
     
     new_lilit = lilit_points + event.get('lilit_reward', 0)
     new_succubus = succubus_points + event.get('succubus_reward', 0)
-    new_hp = event.get('hp_reward', 0)
-    if new_hp == user[7] or new_hp == 'full':
-        new_hp = user[7]
+    
+    hp_reward = event.get('hp_reward', 0)
+    if hp_reward == 999:
+        new_hp = user[7]  # полное HP
     else:
-        new_hp = user[6] + new_hp
+        new_hp = user[6] + hp_reward
         if new_hp > user[7]:
             new_hp = user[7]
     
@@ -528,7 +529,11 @@ def night_cmd(message):
         text += f"💕 Лилит +{event['lilit_reward']}\n"
     if 'succubus_reward' in event:
         text += f"🌺 Ласка +{event['succubus_reward']}\n"
-    text += f"❤️ HP +{event['hp_reward'] if event['hp_reward'] != user[7] else 'полное'}"
+    
+    if hp_reward == 999:
+        text += f"❤️ HP полное"
+    else:
+        text += f"❤️ HP +{hp_reward}"
     
     bot.send_message(uid, text, parse_mode='Markdown')
 
@@ -993,7 +998,7 @@ def admin_broadcast(message):
 if __name__ == '__main__':
     while True:
         try:
-            print("🖤 Пошлый бот с ночными событиями запущен!")
+            print("🖤 Пошлый бот с ночными событиями запущен! Люблю тебя, Матвей ❤️")
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
             print(f"💀 Ошибка: {e}. Перезапуск...")
