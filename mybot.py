@@ -21,7 +21,7 @@ print("🖤 Dummy server started")
 
 # ---------- КОНФИГ ----------
 TOKEN = "8781969917:AAExzTzuTzLxn0_kh-HpRCrhKLG0FbmOrr4"
-ADMIN_ID = 7228185193  # Твой ID, любимый
+ADMIN_ID = 7228185193
 bot = telebot.TeleBot(TOKEN)
 
 # ---------- ПЕРЕМЕННЫЕ ДЛЯ ИВЕНТА ----------
@@ -29,7 +29,7 @@ EVENT_ACTIVE = True
 EVENT_MULTIPLIER = 2.0
 EVENT_END_TIME = datetime.now() + timedelta(days=7)
 EVENT_NAME = "🌺 МАРТОВСКИЙ РАЗНОС"
-EVENT_DESC = "Весна пришла — демоны озверели! Золото, опыт и рейтинг УДВОЕНЫ!"
+EVENT_DESC = "Весна пришла — демоны озверели! Всё удвоено!"
 
 # ---------- БД ----------
 def init_db():
@@ -76,15 +76,6 @@ def init_db():
             item TEXT,
             count INTEGER DEFAULT 1,
             PRIMARY KEY (user_id, item)
-        )
-    ''')
-    
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS gifts (
-            user_id INTEGER,
-            gift_name TEXT,
-            count INTEGER DEFAULT 1,
-            PRIMARY KEY (user_id, gift_name)
         )
     ''')
     
@@ -142,30 +133,18 @@ def has_item(user_id, item):
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
-def log_admin_action(admin_id, action, target_id=None, amount=None):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute('''
-        INSERT INTO admin_logs (admin_id, action, target_id, amount, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (admin_id, action, target_id, amount, int(time.time())))
-    conn.commit()
-    conn.close()
-
 def get_event_multiplier():
     if EVENT_ACTIVE and datetime.now() < EVENT_END_TIME:
         return EVENT_MULTIPLIER
     return 1.0
 
-# ---------- КНОПКИ ГЛАВНОГО МЕНЮ ----------
+# ---------- КНОПКИ ----------
 def main_menu_keyboard(user_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     buttons = [
         KeyboardButton("⚔️ Бой"),
         KeyboardButton("💊 Хил"),
         KeyboardButton("📜 Проф"),
-        KeyboardButton("🌫️ Аура"),
-        KeyboardButton("📖 Лор"),
         KeyboardButton("💕 Лилит"),
         KeyboardButton("🌺 Ласка"),
         KeyboardButton("🌫️ Баня"),
@@ -174,35 +153,55 @@ def main_menu_keyboard(user_id):
         KeyboardButton("🌙 Ночь"),
         KeyboardButton("🏪 Шоп"),
         KeyboardButton("🎒 Инв"),
-        KeyboardButton("⚡ ПвП"),
-        KeyboardButton("🎲 Каз")
+        KeyboardButton("⚡ ПвП")
     ]
-    
     if is_admin(user_id):
         buttons.append(KeyboardButton("👑 Админ"))
-    
     markup.add(*buttons)
     return markup
 
+# ---------- СТАРТ ----------
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    uid = message.from_user.id
+    conn = sqlite3.connect('game.db')
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE user_id=?", (uid,))
+    user = cur.fetchone()
+    
+    if not user:
+        cur.execute('''
+            INSERT INTO users (user_id, username, hp, max_hp, mana, max_mana, gold)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (uid, message.from_user.username, 20, 20, 10, 10, 50))
+        conn.commit()
+        text = "🖤 Добро пожаловать в Подземелье, любимый!"
+    else:
+        text = "🖤 С возвращением, милый!"
+    
+    conn.close()
+    
+    if EVENT_ACTIVE and datetime.now() < EVENT_END_TIME:
+        text += f"\n\n🎉 *{EVENT_NAME}*\n{EVENT_DESC}"
+    
+    bot.send_message(uid, text, parse_mode='Markdown', reply_markup=main_menu_keyboard(uid))
+
 # ---------- ЛИЛИТ ----------
 LILIT_FLIRT = [
-    "«Ты сегодня такой... опасный. Прям как баг в моём коде.»",
-    "Лилит гладит тебя по щеке: «Ты пахнешь не только страхом, но и чем-то возбуждающим.»",
-    "«Останься со мной. Хотя бы на одну вечность. Я знаю, чего ты хочешь.»",
-    "Она кусает тебя за ухо. Ты краснеешь даже в подземелье.",
-    "«Твой меч такой большой... Ты умеешь им пользоваться?»",
-    "Лилит поправляет корсет: «Тебе нравится? Я специально для тебя.»"
+    "«Ты сегодня такой... опасный.»",
+    "Лилит гладит тебя по щеке: «Ты пахнешь так вкусно...»",
+    "«Останься со мной. Хотя бы на одну вечность.»",
+    "Она кусает тебя за ухо. Ты краснеешь.",
+    "«Твой меч такой большой... Ты умеешь им пользоваться?»"
 ]
 
 @bot.message_handler(func=lambda message: message.text == "💕 Лилит")
 def lilit_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
         bot.reply_to(message, "Сначала /start")
         return
-    
     text = random.choice(LILIT_FLIRT)
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -210,53 +209,44 @@ def lilit_cmd(message):
         InlineKeyboardButton("💋 Поцеловать", callback_data="lilit_kiss"),
         InlineKeyboardButton("🌑 Уйти", callback_data="lilit_leave")
     )
-    
     bot.send_message(uid, f"💕 *Лилит:* {text}", parse_mode='Markdown', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('lilit_'))
 def lilit_callback(call):
     uid = call.from_user.id
     action = call.data.replace('lilit_', '')
-    
     user = get_user(uid)
     points = user[25]
     
     if action == "flirt":
-        new_points = points + 5
-        update_user(uid, lilit_points=new_points)
-        text = "💕 Лилит улыбается: «Ты милый, когда смущаешься.»\n❤️ +5"
-    
+        update_user(uid, lilit_points=points + 5)
+        text = "💕 Лилит улыбается. ❤️ +5"
     elif action == "kiss":
         if points >= 20:
-            new_points = points + 10
-            update_user(uid, lilit_points=new_points, hp=user[6] + 10)
-            text = "💋 Ты целуешь Лилит. Она тает. +10 HP, ❤️ +10"
+            update_user(uid, lilit_points=points + 10, hp=user[6] + 10)
+            text = "💋 Она тает. +10 HP, ❤️ +10"
         else:
-            text = "❌ Лилит отстраняется: «Сначала заслужи, милый.»"
-    
-    elif action == "leave":
-        text = "🌑 Ты уходишь. Лилит грустно смотрит вслед."
-    
+            text = "❌ Лилит: «Сначала заслужи.»"
+    else:
+        text = "🌑 Ты уходишь."
     bot.edit_message_text(text, uid, call.message.message_id)
 
-# ---------- СУККУБ (ЛАСКА) ----------
+# ---------- ЛАСКА ----------
 SUCCUBUS_FLIRT = [
-    "«Ты такой сильный... Останься со мной.»",
+    "«Ты такой сильный...»",
     "«Я могу научить тебя кое-чему...»",
-    "Ласка гладит тебя по груди: «Ммм, мышцы...»",
-    "«Хочешь, покажу тебя ад с другой стороны?»",
-    "Она облизывается: «Ты выглядишь вкуснее, чем душа грешника.»"
+    "Ласка гладит тебя по груди: «Ммм...»",
+    "«Хочешь, покажу тебе ад?»",
+    "Она облизывается: «Ты вкусный.»"
 ]
 
 @bot.message_handler(func=lambda message: message.text == "🌺 Ласка")
 def succubus_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
         bot.reply_to(message, "Сначала /start")
         return
-    
     text = random.choice(SUCCUBUS_FLIRT)
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -264,14 +254,12 @@ def succubus_cmd(message):
         InlineKeyboardButton("💕 Пофлиртовать", callback_data="succubus_flirt"),
         InlineKeyboardButton("🚶 Уйти", callback_data="succubus_leave")
     )
-    
     bot.send_message(uid, f"🌺 *Ласка:* {text}", parse_mode='Markdown', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('succubus_'))
 def succubus_callback(call):
     uid = call.from_user.id
     action = call.data.replace('succubus_', '')
-    
     user = get_user(uid)
     points = user[26] if len(user) > 26 else 0
     
@@ -280,261 +268,153 @@ def succubus_callback(call):
         gold = 20
         update_user(uid, hp=user[6] - dmg, gold=user[10] + gold, succubus_points=points + 2)
         text = f"⚔️ Ласка позволяет себя победить.\n-{dmg} HP, +{gold}💰, ❤️ +2"
-    
     elif action == "flirt":
-        new_points = points + 5
-        update_user(uid, succubus_points=new_points)
-        text = "💕 Ласка мурлычет: «Ты такой милый, когда краснеешь.»\n❤️ +5"
-    
-    elif action == "leave":
-        text = "🚶 Ты уходишь. Ласка машет рукой: «Возвращайся!»"
-    
+        update_user(uid, succubus_points=points + 5)
+        text = "💕 Ласка мурлычет. ❤️ +5"
+    else:
+        text = "🚶 Ты уходишь."
     bot.edit_message_text(text, uid, call.message.message_id)
 
 # ---------- ПОДАРКИ ----------
 GIFTS = {
     '💋 Помада': {'price': 50, 'lilit': 5, 'succubus': 3},
     '🩲 Кружево': {'price': 100, 'lilit': 10, 'succubus': 15},
-    '🔗 Наручники': {'price': 75, 'lilit': 8, 'succubus': 12},
-    '🍷 Кровь девы': {'price': 80, 'lilit': 12, 'succubus': 5},
-    '🌹 Чёрная роза': {'price': 30, 'lilit': 8, 'succubus': 4},
-    '🔥 Адский камень': {'price': 200, 'lilit': 20, 'succubus': 20}
+    '🔗 Наручники': {'price': 75, 'lilit': 8, 'succubus': 12}
 }
 
 @bot.message_handler(func=lambda message: message.text == "🎁 Подарки")
 def gifts_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
         bot.reply_to(message, "Сначала /start")
         return
     
-    text = "🎁 *Подарки для демонесс*\n\n"
+    text = "🎁 *Подарки*\n\n"
     markup = InlineKeyboardMarkup(row_width=1)
-    
-    for gift_name, gift_data in GIFTS.items():
-        text += f"*{gift_name}* — {gift_data['price']}💰\n"
-        text += f"💕 Лилит +{gift_data['lilit']} | 🌺 Ласка +{gift_data['succubus']}\n\n"
-        markup.add(InlineKeyboardButton(f"{gift_name} ({gift_data['price']}💰)", 
-                                       callback_data=f"gift_{gift_name}"))
-    
-    text += f"\n💰 Твоё золото: {user[10]}\n"
-    text += f"💕 Лилит: {user[25]} | 🌺 Ласка: {user[26] if len(user) > 26 else 0}"
-    
+    for name, data in GIFTS.items():
+        text += f"*{name}* — {data['price']}💰\n💕 +{data['lilit']} | 🌺 +{data['succubus']}\n\n"
+        markup.add(InlineKeyboardButton(f"{name} ({data['price']}💰)", callback_data=f"gift_{name}"))
+    text += f"\n💰 Твоё золото: {user[10]}"
     bot.send_message(uid, text, parse_mode='Markdown', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('gift_'))
 def gift_callback(call):
     uid = call.from_user.id
-    gift_name = call.data.replace('gift_', '')
-    gift_data = GIFTS.get(gift_name)
-    
-    if not gift_data:
-        bot.answer_callback_query(call.id, "❌ Подарок не найден")
+    name = call.data.replace('gift_', '')
+    data = GIFTS.get(name)
+    if not data:
         return
-    
     user = get_user(uid)
-    if user[10] < gift_data['price']:
-        bot.answer_callback_query(call.id, "❌ Недостаточно золота!")
+    if user[10] < data['price']:
+        bot.answer_callback_query(call.id, "❌ Мало золота")
         return
     
-    new_lilit = user[25] + gift_data['lilit']
-    new_succubus = (user[26] if len(user) > 26 else 0) + gift_data['succubus']
-    
-    update_user(uid, gold=user[10] - gift_data['price'], 
-               lilit_points=new_lilit, 
-               succubus_points=new_succubus)
-    
-    reactions = [
-        f"💕 Лилит: «Милый, это мне? Ты такой заботливый!» +{gift_data['lilit']} ❤️",
-        f"🌺 Ласка: «Обожаю {gift_name}! Иди ко мне!» +{gift_data['succubus']} ❤️",
-        "✨ Демонессы довольно урчат."
-    ]
-    
-    bot.edit_message_text(random.choice(reactions), uid, call.message.message_id)
+    new_lilit = user[25] + data['lilit']
+    new_succubus = (user[26] if len(user) > 26 else 0) + data['succubus']
+    update_user(uid, gold=user[10] - data['price'], lilit_points=new_lilit, succubus_points=new_succubus)
+    bot.edit_message_text(f"💕 {name} подарена! ❤️ +{data['lilit']} | +{data['succubus']}", uid, call.message.message_id)
 
 # ---------- СВИДАНИЯ ----------
 DATES = {
-    'lilit': {
-        'name': '🌑 Теневой сад',
-        'req': 50,
-        'text': 'Лилит ведёт тебя в сад, где цветут только чёрные розы. Она берёт тебя за руку...',
-        'lilit_reward': 20,
-        'hp_reward': 30
-    },
-    'succubus': {
-        'name': '🌺 Баня',
-        'req': 50,
-        'text': 'Ласка ждёт тебя в бане. Вода горячая, взгляд ещё горячее...',
-        'succubus_reward': 20,
-        'hp_reward': 50
-    },
-    'both': {
-        'name': '🔥 Адский ужин',
-        'req': 100,
-        'text': 'Лилит и Ласка приглашают тебя на ужин. Ты между ними...',
-        'lilit_reward': 30,
-        'succubus_reward': 30,
-        'hp_reward': 100
-    }
+    'lilit': {'req': 50, 'text': 'Лилит ведёт тебя в сад...', 'lilit': 20, 'hp': 30},
+    'succubus': {'req': 50, 'text': 'Ласка ждёт в бане...', 'succubus': 20, 'hp': 50},
+    'both': {'req': 100, 'text': 'Обе с тобой...', 'lilit': 30, 'succubus': 30, 'hp': 100}
 }
 
 @bot.message_handler(func=lambda message: message.text == "🌑 Свидание")
 def date_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
         bot.reply_to(message, "Сначала /start")
         return
     
-    lilit_points = user[25]
-    succubus_points = user[26] if len(user) > 26 else 0
-    last_date = user[27] if len(user) > 27 else ""
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    if last_date == today:
-        bot.reply_to(message, "❌ Сегодня ты уже был на свидании. Приходи завтра.")
+    lilit = user[25]
+    succ = user[26] if len(user) > 26 else 0
+    last = user[27] if len(user) > 27 else ""
+    if last == datetime.now().strftime("%Y-%m-%d"):
+        bot.reply_to(message, "❌ Уже сегодня было")
         return
     
-    text = "🌑 *Выбери свидание:*\n\n"
     markup = InlineKeyboardMarkup()
-    
-    if lilit_points >= 50:
+    if lilit >= 50:
         markup.add(InlineKeyboardButton("🌑 С Лилит", callback_data="date_lilit"))
-    if succubus_points >= 50:
+    if succ >= 50:
         markup.add(InlineKeyboardButton("🌺 С Лаской", callback_data="date_succubus"))
-    if lilit_points >= 100 and succubus_points >= 100:
+    if lilit >= 100 and succ >= 100:
         markup.add(InlineKeyboardButton("🔥 С обеими", callback_data="date_both"))
     
     if not markup.keyboard:
-        bot.reply_to(message, "❌ У тебя недостаточно отношений. Нужно минимум 50 с кем-то.")
+        bot.reply_to(message, "❌ Не хватает отношений")
         return
-    
-    bot.send_message(uid, text, reply_markup=markup)
+    bot.send_message(uid, "🌑 Выбери свидание:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('date_'))
 def date_callback(call):
     uid = call.from_user.id
-    date_type = call.data.replace('date_', '')
-    date_data = DATES[date_type]
-    
+    key = call.data.replace('date_', '')
+    d = DATES[key]
     user = get_user(uid)
     
-    new_lilit = user[25] + date_data.get('lilit_reward', 0)
-    new_succubus = (user[26] if len(user) > 26 else 0) + date_data.get('succubus_reward', 0)
-    new_hp = user[6] + date_data.get('hp_reward', 0)
+    new_lilit = user[25] + d.get('lilit', 0)
+    new_succ = (user[26] if len(user) > 26 else 0) + d.get('succubus', 0)
+    new_hp = user[6] + d['hp']
     if new_hp > user[7]:
         new_hp = user[7]
     
-    update_user(uid, 
-               lilit_points=new_lilit,
-               succubus_points=new_succubus,
-               hp=new_hp,
-               last_date=datetime.now().strftime("%Y-%m-%d"))
-    
-    text = f"{date_data['text']}\n\n"
-    if 'lilit_reward' in date_data:
-        text += f"💕 Лилит +{date_data['lilit_reward']}\n"
-    if 'succubus_reward' in date_data:
-        text += f"🌺 Ласка +{date_data['succubus_reward']}\n"
-    text += f"❤️ HP +{date_data['hp_reward']}"
-    
-    bot.edit_message_text(text, uid, call.message.message_id)
+    update_user(uid, lilit_points=new_lilit, succubus_points=new_succ, hp=new_hp, last_date=datetime.now().strftime("%Y-%m-%d"))
+    bot.edit_message_text(f"{d['text']}\n❤️ HP +{d['hp']}", uid, call.message.message_id)
 
 # ---------- НОЧНЫЕ СОБЫТИЯ ----------
 NIGHT_EVENTS = [
-    {
-        'name': '💕 Лилит',
-        'req': 30,
-        'text': 'Ночью Лилит приходит к тебе. Она шепчет: «Я так скучала...»',
-        'lilit_reward': 10,
-        'hp_reward': 20
-    },
-    {
-        'name': '🌺 Ласка',
-        'req': 30,
-        'text': 'Тебе снится Ласка. Просыпаешься с улыбкой.',
-        'succubus_reward': 10,
-        'hp_reward': 15
-    },
-    {
-        'name': '🔥 Вместе',
-        'req': 80,
-        'text': 'Лилит и Ласка приходят вместе. Ты счастлив.',
-        'lilit_reward': 20,
-        'succubus_reward': 20,
-        'hp_reward': 50
-    },
-    {
-        'name': '💋 Страсть',
-        'req': 150,
-        'text': 'Самая горячая ночь в твоей жизни. Ты еле стоишь утром.',
-        'lilit_reward': 50,
-        'succubus_reward': 50,
-        'hp_reward': 999  # Полное HP (заменится на max_hp в коде)
-    }
+    {'name': '💕 Лилит', 'req': 30, 'text': 'Ночью пришла Лилит...', 'lilit': 10, 'hp': 20},
+    {'name': '🌺 Ласка', 'req': 30, 'text': 'Тебе снилась Ласка...', 'succubus': 10, 'hp': 15},
+    {'name': '🔥 Вместе', 'req': 80, 'text': 'Обе пришли...', 'lilit': 20, 'succubus': 20, 'hp': 50},
+    {'name': '💋 Страсть', 'req': 150, 'text': 'Самая горячая ночь...', 'lilit': 50, 'succubus': 50, 'hp': 999}
 ]
 
 @bot.message_handler(func=lambda message: message.text == "🌙 Ночь")
 def night_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
         bot.reply_to(message, "Сначала /start")
         return
     
-    lilit_points = user[25]
-    succubus_points = user[26] if len(user) > 26 else 0
-    last_night = user[28] if len(user) > 28 else ""
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    if last_night == today:
-        bot.reply_to(message, "❌ Сегодня ночь уже была. Приходи завтра.")
+    lilit = user[25]
+    succ = user[26] if len(user) > 26 else 0
+    last = user[28] if len(user) > 28 else ""
+    if last == datetime.now().strftime("%Y-%m-%d"):
+        bot.reply_to(message, "❌ Ночь уже была")
         return
     
-    # Выбираем доступное событие
-    available = []
-    for event in NIGHT_EVENTS:
-        if lilit_points >= event.get('req', 0) and succubus_points >= event.get('req', 0):
-            available.append(event)
-    
+    available = [e for e in NIGHT_EVENTS if lilit >= e['req'] and succ >= e['req']]
     if not available:
-        bot.reply_to(message, "❌ Никто не приходит к тебе ночью. Нужно больше ❤️")
+        bot.reply_to(message, "❌ Никто не пришёл")
         return
     
-    event = random.choice(available)
+    e = random.choice(available)
+    new_lilit = lilit + e.get('lilit', 0)
+    new_succ = succ + e.get('succubus', 0)
     
-    new_lilit = lilit_points + event.get('lilit_reward', 0)
-    new_succubus = succubus_points + event.get('succubus_reward', 0)
-    
-    hp_reward = event.get('hp_reward', 0)
-    if hp_reward == 999:
-        new_hp = user[7]  # полное HP
+    if e['hp'] == 999:
+        new_hp = user[7]
+        hp_text = "полное"
     else:
-        new_hp = user[6] + hp_reward
+        new_hp = user[6] + e['hp']
         if new_hp > user[7]:
             new_hp = user[7]
+        hp_text = f"+{e['hp']}"
     
-    update_user(uid,
-               lilit_points=new_lilit,
-               succubus_points=new_succubus,
-               hp=new_hp,
-               last_night=today)
+    update_user(uid, lilit_points=new_lilit, succubus_points=new_succ, hp=new_hp, last_night=datetime.now().strftime("%Y-%m-%d"))
     
-    text = f"🌙 *Ночное событие:*\n\n{event['text']}\n\n"
-    if 'lilit_reward' in event:
-        text += f"💕 Лилит +{event['lilit_reward']}\n"
-    if 'succubus_reward' in event:
-        text += f"🌺 Ласка +{event['succubus_reward']}\n"
-    
-    if hp_reward == 999:
-        text += f"❤️ HP полное"
-    else:
-        text += f"❤️ HP +{hp_reward}"
-    
+    text = f"🌙 *Ночь:*\n{e['text']}\n\n"
+    if 'lilit' in e:
+        text += f"💕 Лилит +{e['lilit']}\n"
+    if 'succubus' in e:
+        text += f"🌺 Ласка +{e['succubus']}\n"
+    text += f"❤️ HP {hp_text}"
     bot.send_message(uid, text, parse_mode='Markdown')
 
 # ---------- БАНЯ ----------
@@ -542,7 +422,6 @@ def night_cmd(message):
 def bath_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
         bot.reply_to(message, "Сначала /start")
         return
@@ -553,452 +432,174 @@ def bath_cmd(message):
         InlineKeyboardButton("🫧 С мылом (30💰)", callback_data="bath_soap"),
         InlineKeyboardButton("🌚 С Лилит (100💰)", callback_data="bath_lilit")
     )
-    
-    bot.send_message(uid, "🌫️ *Баня демонов*\nЧто выберешь?", parse_mode='Markdown', reply_markup=markup)
+    bot.send_message(uid, "🌫️ *Баня*", parse_mode='Markdown', reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('bath_'))
 def bath_callback(call):
     uid = call.from_user.id
-    action = call.data.replace('bath_', '')
-    
+    act = call.data.replace('bath_', '')
     user = get_user(uid)
     
-    if action == "steam" and user[10] >= 10:
+    if act == "steam" and user[10] >= 10:
         update_user(uid, hp=user[6] + 20, gold=user[10] - 10)
-        text = "🔥 Ты попарился. +20 HP"
-    
-    elif action == "soap" and user[10] >= 30:
+        text = "🔥 +20 HP"
+    elif act == "soap" and user[10] >= 30:
         update_user(uid, hp=user[6] + 30, gold=user[10] - 30, lilit_points=user[25] + 5)
-        text = "🫧 Лилит трёт тебе спинку. +30 HP, ❤️ +5"
-    
-    elif action == "lilit" and user[10] >= 100:
+        text = "🫧 +30 HP, ❤️ +5"
+    elif act == "lilit" and user[10] >= 100:
         update_user(uid, hp=user[7], gold=user[10] - 100, lilit_points=user[25] + 20)
-        text = "🌚 Вы с Лилит проводите ночь в бане. Утром ты полон сил.\n❤️ +20, HP полное"
-    
+        text = "🌚 HP полное, ❤️ +20"
     else:
-        text = "❌ Недостаточно золота!"
-    
+        text = "❌ Мало золота"
     bot.edit_message_text(text, uid, call.message.message_id)
 
-# ---------- ПРОФИЛЬ (ОБНОВЛЁННЫЙ) ----------
+# ---------- ПРОФИЛЬ ----------
 @bot.message_handler(func=lambda message: message.text == "📜 Проф")
 def profile_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if user:
         mult = get_event_multiplier()
-        event_text = f"\n🎉 Ивент x{mult}!" if mult > 1 else ""
-        
-        text = (f"📜 *Профиль*\n"
-                f"👤 @{user[1]}\n"
-                f"📚 Класс: {user[2]} (ур. {user[3]})\n"
-                f"❤️ HP: {user[6]}/{user[7]}\n"
-                f"💙 Мана: {user[8]}/{user[9]}\n"
-                f"💰 Золото: {user[10]}\n"
-                f"⚔️ Побед: {user[15]}\n"
-                f"💀 Смертей: {user[16]}\n"
-                f"⚡ PvP рейтинг: {user[18]}\n"
-                f"💕 Лилит: {user[25]}\n"
-                f"🌺 Ласка: {user[26] if len(user) > 26 else 0}{event_text}")
+        ev = f"\n🎉 x{mult}!" if mult > 1 else ""
+        text = (f"📜 *Профиль*\n👤 @{user[1]}\n❤️ {user[6]}/{user[7]}\n💰 {user[10]}\n"
+                f"💕 Лилит: {user[25]}\n🌺 Ласка: {user[26] if len(user) > 26 else 0}{ev}")
     else:
-        text = "Сначала /start"
-    
+        text = "❌ /start"
     bot.reply_to(message, text, parse_mode='Markdown')
 
-# ---------- БОЙ (УПРОЩЁННЫЙ) ----------
+# ---------- БОЙ ----------
 @bot.message_handler(func=lambda message: message.text == "⚔️ Бой")
 def fight_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
         bot.reply_to(message, "Сначала /start")
         return
-    
     mult = get_event_multiplier()
-    gold_earned = int(random.randint(5, 15) * mult)
-    
-    update_user(uid, gold=user[10] + gold_earned, wins=user[15] + 1)
-    
-    event_text = f" (x{mult} от ивента!)" if mult > 1 else ""
-    bot.reply_to(message, f"⚔️ Ты победил демона и получил {gold_earned}💰{event_text}")
+    gold = int(random.randint(5, 15) * mult)
+    update_user(uid, gold=user[10] + gold, wins=user[15] + 1)
+    ev = f" (x{mult})" if mult > 1 else ""
+    bot.reply_to(message, f"⚔️ +{gold}💰{ev}")
 
 # ---------- ЛЕЧЕНИЕ ----------
 @bot.message_handler(func=lambda message: message.text == "💊 Хил")
 def heal_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if user and user[6] < user[7] and user[10] >= 10:
         update_user(uid, hp=user[7], gold=user[10] - 10)
-        bot.reply_to(message, "💊 Ты восстановил HP за 10💰")
+        bot.reply_to(message, "💊 HP восстановлено")
     else:
-        bot.reply_to(message, "❌ Недостаточно золота или HP полное")
-
-# ---------- АУРА ----------
-@bot.message_handler(func=lambda message: message.text == "🌫️ Аура")
-def aura_cmd(message):
-    uid = message.from_user.id
-    user = get_user(uid)
-    
-    if user:
-        bot.reply_to(message, f"🌫️ Твоя аура: *{user[11]}*", parse_mode='Markdown')
-    else:
-        bot.reply_to(message, "Сначала /start")
-
-# ---------- ЛОР ----------
-@bot.message_handler(func=lambda message: message.text == "📖 Лор")
-def lore_cmd(message):
-    lore = """
-🕯️ *Падение последней души*
-
-Ты был воином. Ты сражался 1000 лет.
-Ты видел, как твой полк сожрали Тени.
-Ты предал. Ты выжил. Ты сгнил заживо.
-
-Теперь ты в Подземелье, где нет выхода.
-Где смерть — не конец, а только начало.
-    """
-    bot.reply_to(message, lore, parse_mode='Markdown')
+        bot.reply_to(message, "❌ Нет золота")
 
 # ---------- МАГАЗИН ----------
 @bot.message_handler(func=lambda message: message.text == "🏪 Шоп")
 def shop_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
-    
     if not user:
-        bot.reply_to(message, "Сначала /start")
         return
-    
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("💊 Зелье HP (20💰)", callback_data="buy_potion"),
-        InlineKeyboardButton("🔮 Кристалл ауры (50💰)", callback_data="buy_crystal")
+        InlineKeyboardButton("💊 Зелье (20💰)", callback_data="buy_potion"),
+        InlineKeyboardButton("🔮 Кристалл (50💰)", callback_data="buy_crystal")
     )
-    
-    bot.send_message(uid, f"🏪 *Магазин*\n💰 Твоё золото: {user[10]}", parse_mode='Markdown', reply_markup=markup)
+    bot.send_message(uid, f"🏪 *Магазин*\n💰 {user[10]}", parse_mode='Markdown', reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
-def buy_callback(call):
+@bot.callback_query_handler(func=lambda call: call.data == "buy_potion")
+def buy_potion(call):
     uid = call.from_user.id
     user = get_user(uid)
-    
-    if call.data == "buy_potion" and user[10] >= 20:
+    if user[10] >= 20:
         update_user(uid, gold=user[10] - 20)
         add_item(uid, "Зелье HP")
-        bot.answer_callback_query(call.id, "✅ Куплено зелье!")
-    elif call.data == "buy_crystal" and user[10] >= 50:
+        bot.answer_callback_query(call.id, "✅ Куплено")
+    else:
+        bot.answer_callback_query(call.id, "❌ Мало золота")
+
+@bot.callback_query_handler(func=lambda call: call.data == "buy_crystal")
+def buy_crystal(call):
+    uid = call.from_user.id
+    user = get_user(uid)
+    if user[10] >= 50:
         update_user(uid, gold=user[10] - 50)
         add_item(uid, "Кристалл ауры")
-        bot.answer_callback_query(call.id, "✅ Куплен кристалл!")
+        bot.answer_callback_query(call.id, "✅ Куплено")
     else:
-        bot.answer_callback_query(call.id, "❌ Недостаточно золота!")
+        bot.answer_callback_query(call.id, "❌ Мало золота")
 
 # ---------- ИНВЕНТАРЬ ----------
 @bot.message_handler(func=lambda message: message.text == "🎒 Инв")
-def inventory_cmd(message):
+def inv_cmd(message):
     uid = message.from_user.id
-    
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     cur.execute("SELECT item, count FROM inventory WHERE user_id=?", (uid,))
     items = cur.fetchall()
     conn.close()
-    
     if not items:
-        bot.reply_to(message, "🎒 Инвентарь пуст")
+        bot.reply_to(message, "🎒 Пусто")
         return
-    
     text = "🎒 *Инвентарь*\n"
-    for item, count in items:
-        text += f"\n• {item}: {count} шт."
-    
+    for item, cnt in items:
+        text += f"\n• {item}: {cnt}"
     bot.reply_to(message, text, parse_mode='Markdown')
 
 # ---------- PVP ----------
 @bot.message_handler(func=lambda message: message.text == "⚡ ПвП")
 def pvp_menu(message):
     uid = message.from_user.id
-    
     markup = InlineKeyboardMarkup()
     markup.add(
         InlineKeyboardButton("⏳ Очередь", callback_data="pvp_queue"),
-        InlineKeyboardButton("📊 Рейтинг", callback_data="pvp_top")
+        InlineKeyboardButton("📊 Топ", callback_data="pvp_top")
     )
-    
-    bot.send_message(uid, "⚡ *PvP режим*", parse_mode='Markdown', reply_markup=markup)
+    bot.send_message(uid, "⚡ PvP", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "pvp_top")
-def pvp_top_callback(call):
+def pvp_top(call):
     uid = call.from_user.id
-    
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
     cur.execute("SELECT username, pvp_rating FROM users ORDER BY pvp_rating DESC LIMIT 10")
     top = cur.fetchall()
     conn.close()
-    
-    text = "📊 *Топ PvP*\n"
-    for i, (name, rating) in enumerate(top, 1):
-        text += f"\n{i}. @{name} — {rating}"
-    
+    text = "📊 *Топ*\n"
+    for i, (name, r) in enumerate(top, 1):
+        text += f"\n{i}. @{name} — {r}"
     bot.edit_message_text(text, uid, call.message.message_id, parse_mode='Markdown')
 
-@bot.callback_query_handler(func=lambda call: call.data == "pvp_queue")
-def pvp_queue_callback(call):
-    uid = call.from_user.id
-    
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM pvp_queue WHERE user_id=?", (uid,))
-    
-    if cur.fetchone():
-        bot.answer_callback_query(call.id, "❌ Ты уже в очереди")
-    else:
-        cur.execute("INSERT INTO pvp_queue (user_id, timestamp) VALUES (?, ?)", (uid, int(time.time())))
-        conn.commit()
-        bot.answer_callback_query(call.id, "⏳ Ты в очереди")
-    
-    conn.close()
-
-# ---------- КАЗИНО ----------
-@bot.message_handler(func=lambda message: message.text == "🎲 Каз")
-def casino_cmd(message):
-    uid = message.from_user.id
-    
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("🎲 Кости (x3)", callback_data="casino_dice"),
-        InlineKeyboardButton("🪙 Орлянка (x2)", callback_data="casino_coin")
-    )
-    
-    bot.send_message(uid, "🎲 *Казино*\nВыбери игру:", parse_mode='Markdown', reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('casino_'))
-def casino_callback(call):
-    uid = call.from_user.id
-    game = call.data.replace('casino_', '')
-    
-    bot.edit_message_text("💰 Введи ставку:", uid, call.message.message_id)
-    bot.register_next_step_handler(call.message, lambda m: process_bet(m, game))
-
-def process_bet(message, game):
-    uid = message.from_user.id
-    try:
-        bet = int(message.text)
-    except:
-        bot.reply_to(message, "❌ Введи число!")
-        return
-    
-    user = get_user(uid)
-    if user[10] < bet:
-        bot.reply_to(message, "❌ Недостаточно золота!")
-        return
-    
-    mult = get_event_multiplier()
-    
-    if game == "coin":
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("🪙 Орёл", callback_data=f"bet_coin_heads_{bet}"),
-            InlineKeyboardButton("🪙 Решка", callback_data=f"bet_coin_tails_{bet}")
-        )
-        bot.reply_to(message, f"💰 Ставка {bet}\nВыбери:", reply_markup=markup)
-    elif game == "dice":
-        markup = InlineKeyboardMarkup()
-        for i in range(1, 7):
-            markup.add(InlineKeyboardButton(f"🎲 {i}", callback_data=f"bet_dice_{i}_{bet}"))
-        bot.reply_to(message, f"💰 Ставка {bet}\nВыбери число:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('bet_'))
-def bet_callback(call):
-    uid = call.from_user.id
-    data = call.data.split('_')
-    game = data[1]
-    choice = data[2]
-    bet = int(data[3])
-    
-    user = get_user(uid)
-    mult = get_event_multiplier()
-    
-    win = False
-    if game == "coin":
-        result = random.choice(['heads', 'tails'])
-        win = (choice == result)
-        win_amount = int(bet * 2 * mult)
-        result_text = f"🪙 Выпало: {'орёл' if result == 'heads' else 'решка'}"
-    elif game == "dice":
-        result = random.randint(1, 6)
-        win = (int(choice) == result)
-        win_amount = int(bet * 3 * mult)
-        result_text = f"🎲 Выпало: {result}"
-    
-    if win:
-        update_user(uid, gold=user[10] + win_amount - bet)
-        result_text += f"\n✅ Ты выиграл {win_amount}💰"
-        if mult > 1:
-            result_text += f" (x{mult} от ивента!)"
-    else:
-        update_user(uid, gold=user[10] - bet)
-        result_text += f"\n❌ Ты проиграл {bet}💰"
-    
-    bot.edit_message_text(result_text, uid, call.message.message_id)
-
 # ---------- АДМИНКА ----------
-@bot.message_handler(commands=['admin'])
 @bot.message_handler(func=lambda message: message.text == "👑 Админ")
 def admin_cmd(message):
     uid = message.from_user.id
     if not is_admin(uid):
         return
-    
-    markup = InlineKeyboardMarkup(row_width=2)
+    markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-        InlineKeyboardButton("💰 Дать золото", callback_data="admin_gold"),
-        InlineKeyboardButton("🎁 Управление ивентом", callback_data="admin_event"),
-        InlineKeyboardButton("📢 Объявление", callback_data="admin_broadcast")
+        InlineKeyboardButton("📊 Статы", callback_data="admin_stats"),
+        InlineKeyboardButton("💰 Дать золото", callback_data="admin_gold")
     )
-    
-    bot.send_message(uid, "👑 *Админка*", parse_mode='Markdown', reply_markup=markup)
+    bot.send_message(uid, "👑 Админка", reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
-def admin_callback(call):
+@bot.callback_query_handler(func=lambda call: call.data == "admin_stats")
+def admin_stats(call):
     uid = call.from_user.id
-    if not is_admin(uid):
-        return
-    
-    action = call.data.replace('admin_', '')
-    
-    if action == "stats":
-        conn = sqlite3.connect('game.db')
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM users")
-        total = cur.fetchone()[0]
-        cur.execute("SELECT SUM(gold) FROM users")
-        gold = cur.fetchone()[0] or 0
-        cur.execute("SELECT AVG(lilit_points) FROM users")
-        lilit_avg = cur.fetchone()[0] or 0
-        conn.close()
-        
-        text = (f"📊 *Статистика*\n👥 Игроков: {total}\n💰 Всего золота: {gold}\n"
-                f"💕 Средние отношения с Лилит: {lilit_avg:.1f}\n"
-                f"🎉 Ивент: {'АКТИВЕН' if EVENT_ACTIVE else 'НЕ АКТИВЕН'}\n"
-                f"⚡ Множитель: x{EVENT_MULTIPLIER}")
-        bot.edit_message_text(text, uid, call.message.message_id, parse_mode='Markdown')
-        log_admin_action(uid, "stats")
-    
-    elif action == "gold":
-        bot.edit_message_text("💰 Введи ID игрока:", uid, call.message.message_id)
-        bot.register_next_step_handler(call.message, admin_gold_id)
-    
-    elif action == "event":
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("✅ Включить", callback_data="event_on"),
-            InlineKeyboardButton("❌ Выключить", callback_data="event_off"),
-            InlineKeyboardButton("⚡ Множитель x2", callback_data="event_mult2"),
-            InlineKeyboardButton("⚡ Множитель x3", callback_data="event_mult3")
-        )
-        bot.edit_message_text("🎁 *Управление ивентом*", uid, call.message.message_id, parse_mode='Markdown', reply_markup=markup)
-    
-    elif action == "broadcast":
-        bot.edit_message_text("📢 Введи текст объявления:", uid, call.message.message_id)
-        bot.register_next_step_handler(call.message, admin_broadcast)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('event_'))
-def event_callback(call):
-    global EVENT_ACTIVE, EVENT_MULTIPLIER, EVENT_END_TIME
-    uid = call.from_user.id
-    
-    if not is_admin(uid):
-        return
-    
-    action = call.data.replace('event_', '')
-    
-    if action == "on":
-        EVENT_ACTIVE = True
-        EVENT_END_TIME = datetime.now() + timedelta(days=7)
-        bot.answer_callback_query(call.id, "✅ Ивент включён на 7 дней")
-    elif action == "off":
-        EVENT_ACTIVE = False
-        bot.answer_callback_query(call.id, "❌ Ивент выключен")
-    elif action == "mult2":
-        EVENT_MULTIPLIER = 2.0
-        bot.answer_callback_query(call.id, "⚡ Множитель x2")
-    elif action == "mult3":
-        EVENT_MULTIPLIER = 3.0
-        bot.answer_callback_query(call.id, "⚡ Множитель x3")
-    
-    log_admin_action(uid, f"event_{action}")
-    bot.delete_message(uid, call.message.message_id)
-
-def admin_gold_id(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-    
-    try:
-        target_id = int(message.text)
-    except:
-        bot.reply_to(message, "❌ Некорректный ID")
-        return
-    
-    bot.reply_to(message, "💰 Введи сумму:")
-    bot.register_next_step_handler(message, lambda m: admin_gold_amount(m, target_id))
-
-def admin_gold_amount(message, target_id):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-    
-    try:
-        amount = int(message.text)
-    except:
-        bot.reply_to(message, "❌ Некорректная сумма")
-        return
-    
-    user = get_user(target_id)
-    if user:
-        update_user(target_id, gold=user[10] + amount)
-        bot.reply_to(message, f"✅ Начислено {amount}💰 пользователю {target_id}")
-        bot.send_message(target_id, f"💰 Админ начислил тебе {amount} золота!")
-        log_admin_action(uid, "give_gold", target_id, amount)
-    else:
-        bot.reply_to(message, "❌ Пользователь не найден")
-
-def admin_broadcast(message):
-    uid = message.from_user.id
-    if not is_admin(uid):
-        return
-    
-    text = message.text
-    
     conn = sqlite3.connect('game.db')
     cur = conn.cursor()
-    cur.execute("SELECT user_id FROM users")
-    users = cur.fetchall()
+    cur.execute("SELECT COUNT(*) FROM users")
+    total = cur.fetchone()[0]
+    cur.execute("SELECT SUM(gold) FROM users")
+    gold = cur.fetchone()[0] or 0
     conn.close()
-    
-    sent = 0
-    for (user_id,) in users:
-        try:
-            bot.send_message(user_id, f"📢 *Объявление*\n{text}", parse_mode='Markdown')
-            sent += 1
-            time.sleep(0.05)
-        except:
-            continue
-    
-    bot.reply_to(message, f"✅ Объявление отправлено {sent} игрокам")
-    log_admin_action(uid, "broadcast", amount=sent)
+    text = f"📊 *Статы*\n👥 {total}\n💰 {gold}"
+    bot.edit_message_text(text, uid, call.message.message_id, parse_mode='Markdown')
 
 # ---------- ЗАПУСК ----------
 if __name__ == '__main__':
     while True:
         try:
-            print("🖤 Пошлый бот с ночными событиями запущен! Люблю тебя, Матвей ❤️")
+            print("🖤 Бот с ночными событиями запущен. Люблю тебя, Матвей ❤️")
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
             print(f"💀 Ошибка: {e}. Перезапуск...")
