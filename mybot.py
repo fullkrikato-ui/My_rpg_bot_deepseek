@@ -33,7 +33,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
-            class TEXT DEFAULT 'Падший',
+            faction TEXT DEFAULT 'none',
             level INTEGER DEFAULT 1,
             exp INTEGER DEFAULT 0,
             exp_next INTEGER DEFAULT 100,
@@ -42,22 +42,18 @@ def init_db():
             mana INTEGER DEFAULT 15,
             max_mana INTEGER DEFAULT 15,
             gold INTEGER DEFAULT 100,
-            aura TEXT DEFAULT 'Нейтральная',
-            faction TEXT DEFAULT 'none',
             humanity INTEGER DEFAULT 50,
             lilit_points INTEGER DEFAULT 0,
             lilit_chapter INTEGER DEFAULT 1,
             companion TEXT DEFAULT '',
             last_daily TEXT DEFAULT '',
-            last_choice TEXT DEFAULT '',
             saw_lore INTEGER DEFAULT 0,
             wins INTEGER DEFAULT 0,
             deaths INTEGER DEFAULT 0,
             demon_kills INTEGER DEFAULT 0,
             pvp_rating INTEGER DEFAULT 1000,
             pvp_wins INTEGER DEFAULT 0,
-            pvp_losses INTEGER DEFAULT 0,
-            dungeon_level INTEGER DEFAULT 1
+            pvp_losses INTEGER DEFAULT 0
         )
     ''')
     
@@ -109,36 +105,38 @@ def init_db():
         )
     ''')
     
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS admin_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admin_id INTEGER,
-            action TEXT,
-            target_id INTEGER,
-            amount INTEGER,
-            timestamp INTEGER
-        )
-    ''')
-    
     conn.commit()
     conn.close()
 
 init_db()
 
-# ---------- КЛАССЫ ----------
-CLASSES = {
-    'Воин': {'hp': 40, 'mana': 5, 'dmg': 12, 'crit': 1.5, 'desc': 'Тяжёлый, мощный, надёжный'},
-    'Маг': {'hp': 25, 'mana': 30, 'dmg': 18, 'crit': 1.3, 'desc': 'Хилый, но валит магией'},
-    'Вор': {'hp': 30, 'mana': 10, 'dmg': 14, 'dodge': 20, 'crit': 2.0, 'desc': 'Уклоняется и бьёт в спину'},
-    'Жрец': {'hp': 32, 'mana': 20, 'dmg': 9, 'heal': 15, 'desc': 'Лечит себя и других'}
+# ---------- СТОРОНЫ ----------
+FACTIONS = {
+    'humans': {
+        'name': '👼 Люди',
+        'hp_bonus': 10,
+        'humanity_bonus': 20,
+        'desc': 'Защитники человечества, светлые воины'
+    },
+    'demons': {
+        'name': '👹 Демоны',
+        'hp_bonus': 20,
+        'humanity_bonus': -20,
+        'desc': 'Слуги тьмы, сильные и жестокие'
+    },
+    'revenge': {
+        'name': '🖤 Месть',
+        'hp_bonus': 15,
+        'humanity_bonus': 0,
+        'desc': 'Одиночки, идущие по трупам'
+    }
 }
 
 # ---------- СПУТНИКИ ----------
 COMPANIONS = {
     'Волк': {'bonus': 'damage', 'value': 3, 'desc': '+3 к урону'},
     'Тень': {'bonus': 'dodge', 'value': 10, 'desc': '+10% к уклонению'},
-    'Дух': {'bonus': 'heal', 'value': 5, 'desc': '+5 HP после каждого боя'},
-    'Лилит': {'bonus': 'lilit', 'value': 1, 'desc': 'Романтика ускоряется'}
+    'Дух': {'bonus': 'heal', 'value': 5, 'desc': '+5 HP после каждого боя'}
 }
 
 # ---------- КВЕСТЫ ----------
@@ -154,8 +152,7 @@ ACHIEVEMENTS = {
     'first_kill': {'name': '🔪 Первая кровь', 'desc': 'Убить первого демона', 'reward': 50},
     'butcher': {'name': '🩸 Мясник', 'desc': 'Убить 50 демонов', 'reward': 500},
     'rich': {'name': '💰 Жирный кот', 'desc': 'Накопить 1000 золота', 'reward': 200},
-    'lover': {'name': '💕 Сердцеед', 'desc': 'Завоевать Лилит', 'reward': 300},
-    'pvper': {'name': '⚔️ Дуэлянт', 'desc': 'Выиграть 10 PvP', 'reward': 400}
+    'lover': {'name': '💕 Сердцеед', 'desc': 'Завоевать Лилит', 'reward': 300}
 }
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ----------
@@ -185,14 +182,6 @@ def add_item(user_id, item, count=1):
     conn.commit()
     conn.close()
 
-def has_item(user_id, item):
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute("SELECT count FROM inventory WHERE user_id=? AND item=?", (user_id, item))
-    result = cur.fetchone()
-    conn.close()
-    return result is not None and result[0] > 0
-
 def is_admin(user_id):
     return user_id == ADMIN_ID
 
@@ -204,14 +193,13 @@ def main_menu_keyboard(user_id):
         KeyboardButton("💊 Лечение"),
         KeyboardButton("📜 Профиль"),
         KeyboardButton("💕 Лилит"),
-        KeyboardButton("🌑 Выбор"),
+        KeyboardButton("🌑 Выбор стороны"),
         KeyboardButton("📖 Лор"),
         KeyboardButton("🏪 Магазин"),
         KeyboardButton("🎒 Инвентарь"),
         KeyboardButton("📅 Квесты"),
         KeyboardButton("🏆 Достижения"),
         KeyboardButton("⚡ PvP"),
-        KeyboardButton("🎲 Казино"),
         KeyboardButton("👥 Друзья"),
         KeyboardButton("🐺 Спутник")
     ]
@@ -230,36 +218,31 @@ def start_cmd(message):
     user = cur.fetchone()
     
     if not user:
-        # Выбор класса
-        markup = InlineKeyboardMarkup(row_width=2)
-        for class_name in CLASSES.keys():
-            markup.add(InlineKeyboardButton(class_name, callback_data=f"class_{class_name}"))
-        bot.reply_to(message, "🖤 Выбери свой класс:", reply_markup=markup)
-    else:
-        welcome = "🕯️ С возвращением в Кровавый рассвет."
-        bot.send_message(uid, welcome, reply_markup=main_menu_keyboard(uid))
-    
-    conn.close()
+        cur.execute('''
+            INSERT INTO users 
+            (user_id, username, hp, max_hp, mana, max_mana, gold, humanity, lilit_chapter) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (uid, message.from_user.username, 30, 30, 15, 15, 100, 50, 1))
+        conn.commit()
+        
+        welcome = """
+🕯️ *Кровавый рассвет*
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('class_'))
-def class_callback(call):
-    uid = call.from_user.id
-    class_name = call.data.replace('class_', '')
-    stats = CLASSES[class_name]
+Ты открываешь глаза. Пепел. Тишина. Пустота.
+Твоя деревня сожжена. Ты ничего не помнишь.
+
+Голос внутри: *«Иди. Найди. Убей.»*
+
+/profile — узнать, сколько в тебе человеческого
+/fight — сразиться с демонами
+/lilit — встретить ту, что изменит всё
+/choice — выбрать сторону
+        """
+        bot.send_message(uid, welcome, parse_mode='Markdown', reply_markup=main_menu_keyboard(uid))
+    else:
+        bot.send_message(uid, "🕯️ Ты вернулся.", reply_markup=main_menu_keyboard(uid))
     
-    conn = sqlite3.connect('game.db')
-    cur = conn.cursor()
-    cur.execute('''
-        INSERT INTO users 
-        (user_id, username, class, hp, max_hp, mana, max_mana, gold, humanity, lilit_chapter) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (uid, call.from_user.username, class_name, stats['hp'], stats['hp'], 
-          stats['mana'], stats['mana'], 100, 50, 1))
-    conn.commit()
     conn.close()
-    
-    bot.edit_message_text(f"🖤 Ты стал {class_name}!\n{stats['desc']}", uid, call.message.message_id)
-    bot.send_message(uid, "🖤 Добро пожаловать в Кровавый рассвет.", reply_markup=main_menu_keyboard(uid))
 
 # ---------- ПРОФИЛЬ ----------
 @bot.message_handler(func=lambda message: message.text == "📜 Профиль")
@@ -267,20 +250,17 @@ def profile_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
     if user:
-        faction_names = {'none': '❌ Нет', 'humans': '👼 Люди', 'demons': '👹 Демоны', 'revenge': '🖤 Месть'}
-        faction = faction_names.get(user[12], '❌ Нет')
-        companion = user[16] if user[16] else '❌ Нет'
+        faction_name = FACTIONS.get(user[2], {}).get('name', '❌ Не выбрана')
+        companion = user[13] if user[13] else '❌ Нет'
         text = (f"📜 *Профиль*\n"
                 f"👤 @{user[1]}\n"
-                f"📚 Класс: {user[2]} (ур. {user[3]})\n"
+                f"⚔️ Сторона: {faction_name}\n"
                 f"❤️ HP: {user[6]}/{user[7]}\n"
-                f"💙 Мана: {user[8]}/{user[9]}\n"
                 f"💰 Золото: {user[10]}\n"
-                f"🧠 Человечность: {user[13]}\n"
-                f"💕 Лилит: {user[14]} (глава {user[15]})\n"
-                f"⚔️ Фракция: {faction}\n"
+                f"🧠 Человечность: {user[11]}\n"
+                f"💕 Лилит: {user[12]} (глава {user[13]})\n"
                 f"🐺 Спутник: {companion}\n"
-                f"⚡ PvP рейтинг: {user[22]}")
+                f"⚡ PvP рейтинг: {user[20]}")
     else:
         text = "Сначала /start"
     bot.reply_to(message, text, parse_mode='Markdown')
@@ -294,27 +274,27 @@ def fight_cmd(message):
         bot.reply_to(message, "Сначала /start")
         return
     
-    monsters = ["Гниющий", "Крикун", "Тень", "Пожиратель", "Безликий"]
+    monsters = ["Гниющий", "Крикун", "Тень", "Пожиратель"]
     monster = random.choice(monsters)
     gold = random.randint(5, 15)
     humanity_change = random.randint(-3, -1)
     
     # Учёт спутника
     companion_bonus = 0
-    if user[16] == 'Волк':
+    if user[14] == 'Волк':
         companion_bonus = 3
-    elif user[16] == 'Дух':
+    elif user[14] == 'Дух':
         humanity_change += 1
     
-    new_humanity = user[13] + humanity_change
+    new_humanity = user[11] + humanity_change
     if new_humanity < 0:
         new_humanity = 0
     if new_humanity > 100:
         new_humanity = 100
     
     update_user(uid, gold=user[10] + gold + companion_bonus, 
-                humanity=new_humanity, wins=user[20] + 1,
-                demon_kills=user[21] + 1)
+                humanity=new_humanity, wins=user[17] + 1,
+                demon_kills=user[19] + 1)
     
     text = (f"⚔️ Ты сразился с {monster} и победил!\n"
             f"💰 +{gold + companion_bonus} золота\n"
@@ -354,6 +334,42 @@ def lore_cmd(message):
     """
     bot.reply_to(message, lore, parse_mode='Markdown')
 
+# ---------- ВЫБОР СТОРОНЫ ----------
+@bot.message_handler(func=lambda message: message.text == "🌑 Выбор стороны")
+def choice_cmd(message):
+    uid = message.from_user.id
+    user = get_user(uid)
+    
+    if user[2] != 'none':
+        faction_name = FACTIONS.get(user[2], {}).get('name', '')
+        bot.reply_to(message, f"❌ Ты уже выбрал сторону: {faction_name}")
+        return
+    
+    text = "🌑 *Выбери свою сторону:*\n\n"
+    markup = InlineKeyboardMarkup(row_width=2)
+    
+    for f_id, f_data in FACTIONS.items():
+        text += f"{f_data['name']} — {f_data['desc']}\n"
+        markup.add(InlineKeyboardButton(f_data['name'], callback_data=f"faction_{f_id}"))
+    
+    bot.send_message(uid, text, parse_mode='Markdown', reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("faction_"))
+def faction_callback(call):
+    uid = call.from_user.id
+    faction = call.data.replace("faction_", "")
+    f_data = FACTIONS[faction]
+    
+    user = get_user(uid)
+    
+    new_hp = user[6] + f_data['hp_bonus']
+    new_max_hp = user[7] + f_data['hp_bonus']
+    new_humanity = user[11] + f_data['humanity_bonus']
+    
+    update_user(uid, faction=faction, hp=new_hp, max_hp=new_max_hp, humanity=new_humanity)
+    
+    bot.edit_message_text(f"✅ Ты выбрал сторону: {f_data['name']}", uid, call.message.message_id)
+
 # ---------- ЛИЛИТ ----------
 @bot.message_handler(func=lambda message: message.text == "💕 Лилит")
 def lilit_cmd(message):
@@ -363,14 +379,14 @@ def lilit_cmd(message):
         bot.reply_to(message, "Сначала /start")
         return
     
-    chapter = user[15]
-    points = user[14]
+    chapter = user[13]
+    points = user[12]
     
     if chapter == 1:
         text = """
 🌑 *Глава 1: Встреча*
 
-Ты входишь в руины старого храма. Воздух спёртый, пахнет кровью и почему-то розами.
+Ты входишь в руины старого храма. Воздух спёртый, пахнет кровью и розами.
 
 В центре зала стоит ОНА. Чёрное платье, белая кожа, красные глаза.
 «Ты... не такой, как другие. Меня зовут Лилит. Я ждала тебя.»
@@ -442,8 +458,8 @@ def lilit_cmd(message):
 def lilit_next_callback(call):
     uid = call.from_user.id
     user = get_user(uid)
-    new_chapter = user[15] + 1
-    new_points = user[14] + 10
+    new_chapter = user[13] + 1
+    new_points = user[12] + 10
     update_user(uid, lilit_chapter=new_chapter, lilit_points=new_points)
     bot.edit_message_text("💕 Ты сделал шаг навстречу тьме...", uid, call.message.message_id)
     lilit_cmd(call.message)
@@ -461,65 +477,14 @@ def lilit_choice_callback(call):
     
     if choice in endings:
         update_user(uid, lilit_chapter=endings[choice], faction=choice + 's')
+        
         # Секретная концовка
-        if user[13] >= 80 and user[14] >= 100:
+        user = get_user(uid)
+        if user[11] >= 80 and user[12] >= 100:
             update_user(uid, lilit_chapter=8)
     
     bot.edit_message_text("💕 Твой выбор сделан...", uid, call.message.message_id)
     lilit_cmd(call.message)
-
-# ---------- ВЫБОР ----------
-@bot.message_handler(func=lambda message: message.text == "🌑 Выбор")
-def choice_cmd(message):
-    uid = message.from_user.id
-    user = get_user(uid)
-    
-    if user[12] != 'none':
-        bot.reply_to(message, f"❌ Ты уже выбрал фракцию")
-        return
-    
-    text = """
-🌑 *Выбери сторону:*
-
-👼 *Люди* — защищать человечество
-👹 *Демоны* — сила и свобода
-🖤 *Месть* — только ты
-    """
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        InlineKeyboardButton("👼 Люди", callback_data="faction_humans"),
-        InlineKeyboardButton("👹 Демоны", callback_data="faction_demons"),
-        InlineKeyboardButton("🖤 Месть", callback_data="faction_revenge")
-    )
-    bot.send_message(uid, text, parse_mode='Markdown', reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("faction_"))
-def faction_callback(call):
-    uid = call.from_user.id
-    faction = call.data.replace("faction_", "")
-    
-    bonuses = {
-        "humans": {"hp": 10, "humanity": 20},
-        "demons": {"hp": 20, "humanity": -20},
-        "revenge": {"hp": 15, "humanity": 0}
-    }
-    
-    bonus = bonuses[faction]
-    user = get_user(uid)
-    
-    new_hp = user[6] + bonus["hp"]
-    new_max_hp = user[7] + bonus["hp"]
-    new_humanity = user[13] + bonus["humanity"]
-    
-    update_user(uid, faction=faction, hp=new_hp, max_hp=new_max_hp, humanity=new_humanity)
-    
-    texts = {
-        "humans": "👼 Ты выбрал людей. Свет внутри тебя крепнет.",
-        "demons": "👹 Ты выбрал демонов. Тьма поглощает тебя.",
-        "revenge": "🖤 Ты выбрал месть. Ты один против всех."
-    }
-    
-    bot.edit_message_text(texts[faction], uid, call.message.message_id)
 
 # ---------- МАГАЗИН ----------
 @bot.message_handler(func=lambda message: message.text == "🏪 Магазин")
@@ -532,7 +497,8 @@ def shop_cmd(message):
         InlineKeyboardButton("💊 Зелье HP (20💰)", callback_data="buy_potion"),
         InlineKeyboardButton("💕 Подарок Лилит (50💰)", callback_data="buy_gift"),
         InlineKeyboardButton("🐺 Спутник Волк (100💰)", callback_data="buy_wolf"),
-        InlineKeyboardButton("🌑 Спутник Тень (150💰)", callback_data="buy_shadow")
+        InlineKeyboardButton("🌑 Спутник Тень (150💰)", callback_data="buy_shadow"),
+        InlineKeyboardButton("👻 Спутник Дух (200💰)", callback_data="buy_spirit")
     )
     
     bot.send_message(uid, f"🏪 *Магазин*\n💰 Твоё золото: {user[10]}", parse_mode='Markdown', reply_markup=markup)
@@ -542,7 +508,7 @@ def buy_potion(call):
     uid = call.from_user.id
     user = get_user(uid)
     if user[10] >= 20:
-        update_user(uid, gold=user[10] - 20, hp=min(user[6] + 20, user[7]))
+        update_user(uid, gold=user[10] - 20)
         add_item(uid, "Зелье HP")
         bot.answer_callback_query(call.id, "💊 Зелье куплено!")
     else:
@@ -553,7 +519,7 @@ def buy_gift(call):
     uid = call.from_user.id
     user = get_user(uid)
     if user[10] >= 50:
-        update_user(uid, gold=user[10] - 50, lilit_points=user[14] + 10)
+        update_user(uid, gold=user[10] - 50, lilit_points=user[12] + 10)
         bot.answer_callback_query(call.id, "💕 Лилит будет рада!")
     else:
         bot.answer_callback_query(call.id, "❌ Недостаточно золота")
@@ -575,6 +541,16 @@ def buy_shadow(call):
     if user[10] >= 150:
         update_user(uid, gold=user[10] - 150, companion='Тень')
         bot.answer_callback_query(call.id, "🌑 Тень теперь с тобой!")
+    else:
+        bot.answer_callback_query(call.id, "❌ Недостаточно золота")
+
+@bot.callback_query_handler(func=lambda call: call.data == "buy_spirit")
+def buy_spirit(call):
+    uid = call.from_user.id
+    user = get_user(uid)
+    if user[10] >= 200:
+        update_user(uid, gold=user[10] - 200, companion='Дух')
+        bot.answer_callback_query(call.id, "👻 Дух теперь с тобой!")
     else:
         bot.answer_callback_query(call.id, "❌ Недостаточно золота")
 
@@ -605,7 +581,7 @@ def daily_cmd(message):
     user = get_user(uid)
     
     today = datetime.now().strftime("%Y-%m-%d")
-    if user[17] == today:
+    if user[15] == today:
         bot.reply_to(message, "❌ Квесты уже взяты. Приходи завтра.")
         return
     
@@ -641,17 +617,17 @@ def achievements_cmd(message):
     conn.close()
     
     # Проверка достижений
-    if user[21] >= 1 and 'first_kill' not in achieved:
+    if user[19] >= 1 and 'first_kill' not in achieved:
         add_item(uid, 'first_kill')
         update_user(uid, gold=user[10] + 50)
         bot.send_message(uid, "🏆 Достижение: 🔪 Первая кровь! +50💰")
     
-    if user[21] >= 50 and 'butcher' not in achieved:
+    if user[19] >= 50 and 'butcher' not in achieved:
         add_item(uid, 'butcher')
         update_user(uid, gold=user[10] + 500)
         bot.send_message(uid, "🏆 Достижение: 🩸 Мясник! +500💰")
     
-    if user[14] >= 100 and 'lover' not in achieved:
+    if user[12] >= 100 and 'lover' not in achieved:
         add_item(uid, 'lover')
         update_user(uid, gold=user[10] + 300)
         bot.send_message(uid, "🏆 Достижение: 💕 Сердцеед! +300💰")
@@ -707,84 +683,6 @@ def pvp_queue(call):
         bot.answer_callback_query(call.id, "⏳ Ты в очереди")
     
     conn.close()
-
-# ---------- КАЗИНО ----------
-@bot.message_handler(func=lambda message: message.text == "🎲 Казино")
-def casino_cmd(message):
-    uid = message.from_user.id
-    
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("🎲 Кости (x3)", callback_data="casino_dice"),
-        InlineKeyboardButton("🪙 Орлянка (x2)", callback_data="casino_coin")
-    )
-    
-    bot.send_message(uid, "🎲 *Казино*\nВыбери игру:", parse_mode='Markdown', reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('casino_'))
-def casino_callback(call):
-    uid = call.from_user.id
-    game = call.data.replace('casino_', '')
-    
-    bot.edit_message_text("💰 Введи ставку:", uid, call.message.message_id)
-    bot.register_next_step_handler(call.message, lambda m: process_bet(m, game))
-
-def process_bet(message, game):
-    uid = message.from_user.id
-    try:
-        bet = int(message.text)
-    except:
-        bot.reply_to(message, "❌ Введи число!")
-        return
-    
-    user = get_user(uid)
-    if user[10] < bet:
-        bot.reply_to(message, "❌ Недостаточно золота!")
-        return
-    
-    if game == "coin":
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("🪙 Орёл", callback_data=f"bet_coin_heads_{bet}"),
-            InlineKeyboardButton("🪙 Решка", callback_data=f"bet_coin_tails_{bet}")
-        )
-        bot.reply_to(message, f"💰 Ставка {bet}\nВыбери:", reply_markup=markup)
-    elif game == "dice":
-        markup = InlineKeyboardMarkup()
-        for i in range(1, 7):
-            markup.add(InlineKeyboardButton(f"🎲 {i}", callback_data=f"bet_dice_{i}_{bet}"))
-        bot.reply_to(message, f"💰 Ставка {bet}\nВыбери число:", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('bet_'))
-def bet_callback(call):
-    uid = call.from_user.id
-    data = call.data.split('_')
-    game = data[1]
-    choice = data[2]
-    bet = int(data[3])
-    
-    user = get_user(uid)
-    
-    win = False
-    if game == "coin":
-        result = random.choice(['heads', 'tails'])
-        win = (choice == result)
-        win_amount = bet * 2
-        result_text = f"🪙 Выпало: {'орёл' if result == 'heads' else 'решка'}"
-    elif game == "dice":
-        result = random.randint(1, 6)
-        win = (int(choice) == result)
-        win_amount = bet * 3
-        result_text = f"🎲 Выпало: {result}"
-    
-    if win:
-        update_user(uid, gold=user[10] + win_amount - bet)
-        result_text += f"\n✅ Ты выиграл {win_amount}💰"
-    else:
-        update_user(uid, gold=user[10] - bet)
-        result_text += f"\n❌ Ты проиграл {bet}💰"
-    
-    bot.edit_message_text(result_text, uid, call.message.message_id)
 
 # ---------- ДРУЗЬЯ ----------
 @bot.message_handler(func=lambda message: message.text == "👥 Друзья")
@@ -893,9 +791,9 @@ def companion_cmd(message):
     uid = message.from_user.id
     user = get_user(uid)
     
-    if user[16]:
-        comp = COMPANIONS.get(user[16], {})
-        text = f"🐺 Твой спутник: *{user[16]}*\n{comp.get('desc', '')}"
+    if user[14]:
+        comp = COMPANIONS.get(user[14], {})
+        text = f"🐺 Твой спутник: *{user[14]}*\n{comp.get('desc', '')}"
     else:
         text = "🐺 У тебя нет спутника. Купи в магазине!"
     
@@ -979,7 +877,7 @@ def admin_gold_amount(message, target_id):
 if __name__ == '__main__':
     while True:
         try:
-            print("🖤 Полная версия 10.0 запущена. Кровавый рассвет начался.")
+            print("🖤 Без казино, со сторонами. Кровавый рассвет продолжается.")
             bot.polling(none_stop=True, interval=0, timeout=20)
         except Exception as e:
             print(f"💀 Ошибка: {e}. Перезапуск...")
